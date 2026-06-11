@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "DeepSeek Page Translator",
+  "version": "0.1.0",
+  "description": "Translate pages continuously per domain with DeepSeek.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.deepseek.com/*"
+  ],
+  "action": {
+    "default_title": "DeepSeek Translator",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/deepseek-gray-16.png",
+      "32": "icons/deepseek-gray-32.png",
+      "48": "icons/deepseek-gray-48.png",
+      "128": "icons/deepseek-gray-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/deepseek-16.png",
+    "32": "icons/deepseek-32.png",
+    "48": "icons/deepseek-48.png",
+    "128": "icons/deepseek-128.png"
+  },
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
