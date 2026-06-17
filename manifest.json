@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "DeepSeek Page Translator",
+  "name": "__MSG_extensionName__",
   "version": "0.1.0",
-  "description": "Translate pages continuously per domain with DeepSeek.",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "permissions": [
     "activeTab",
     "scripting",
@@ -12,7 +13,7 @@
     "https://api.deepseek.com/*"
   ],
   "action": {
-    "default_title": "DeepSeek Translator",
+    "default_title": "__MSG_extensionActionTitle__",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/deepseek-gray-16.png",

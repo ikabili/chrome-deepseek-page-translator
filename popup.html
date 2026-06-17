@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,26 +10,26 @@
     <main class="panel">
       <header class="header">
         <div>
-          <h1>DeepSeek 翻译</h1>
-          <p id="domainText">读取当前域名中...</p>
+          <h1 data-i18n="popupTitle">DeepSeek Translator</h1>
+          <p id="domainText" data-i18n="domainLoading">Loading current domain...</p>
         </div>
-        <label class="switch" title="为当前域名开启持续翻译">
+        <label class="switch" title="Enable continuous translation for this domain" data-i18n-title="domainSwitchTitle">
           <input id="enabledInput" type="checkbox">
           <span></span>
         </label>
       </header>
 
       <section class="field">
-        <label for="apiKeyInput">API Key</label>
-        <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off">
+        <label for="apiKeyInput" data-i18n="apiKeyLabel">API Key</label>
+        <input id="apiKeyInput" type="password" placeholder="sk-..." data-i18n-placeholder="apiKeyPlaceholder" autocomplete="off">
       </section>
 
       <section class="row">
         <label class="field compact" for="targetLangInput">
-          <span>目标语言</span>
+          <span data-i18n="targetLanguageLabel">Target language</span>
           <select id="targetLangInput">
-            <option value="zh-CN">简体中文</option>
-            <option value="zh-TW">繁体中文</option>
+            <option value="zh-CN" data-i18n="languageZhCn">Simplified Chinese</option>
+            <option value="zh-TW" data-i18n="languageZhTw">Traditional Chinese</option>
             <option value="en">English</option>
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
@@ -39,7 +39,7 @@
           </select>
         </label>
         <label class="field compact" for="modelInput">
-          <span>模型</span>
+          <span data-i18n="modelLabel">Model</span>
           <select id="modelInput">
             <option value="deepseek-v4-flash">V4 Flash</option>
             <option value="deepseek-v4-pro">V4 Pro</option>
@@ -48,18 +48,18 @@
       </section>
 
       <section class="actions">
-        <button id="translateButton" type="button">翻译当前页</button>
-        <button id="restoreButton" type="button" class="secondary">恢复原文</button>
+        <button id="translateButton" type="button" data-i18n="translateCurrentPageButton">Translate page</button>
+        <button id="restoreButton" type="button" class="secondary" data-i18n="restoreOriginalButton">Restore original</button>
       </section>
 
       <section class="actions">
-        <button id="clearCacheButton" type="button" class="secondary">清除缓存</button>
-        <button id="saveButton" type="button" class="secondary">保存设置</button>
+        <button id="clearCacheButton" type="button" class="secondary" data-i18n="clearCacheButton">Clear cache</button>
+        <button id="saveButton" type="button" class="secondary" data-i18n="saveSettingsButton">Save settings</button>
       </section>
 
       <section class="site-settings">
         <div class="section-title">
-          <h2>已开启的网站</h2>
+          <h2 data-i18n="enabledSitesTitle">Enabled sites</h2>
           <span id="enabledSiteCount">0</span>
         </div>
         <div id="enabledSitesList" class="sites-list"></div>

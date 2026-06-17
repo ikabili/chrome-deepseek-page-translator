@@ -1,0 +1,133 @@
+{
+  "extensionName": {
+    "message": "DeepSeek Page Translator",
+    "description": "Extension name."
+  },
+  "extensionDescription": {
+    "message": "Translate pages continuously per domain with DeepSeek.",
+    "description": "Extension description."
+  },
+  "extensionActionTitle": {
+    "message": "DeepSeek Translator",
+    "description": "Browser action tooltip."
+  },
+  "popupTitle": {
+    "message": "DeepSeek Translator"
+  },
+  "domainLoading": {
+    "message": "Loading current domain..."
+  },
+  "domainUnavailable": {
+    "message": "Current page unavailable"
+  },
+  "domainSwitchTitle": {
+    "message": "Enable continuous translation for this domain"
+  },
+  "apiKeyLabel": {
+    "message": "API Key"
+  },
+  "apiKeyPlaceholder": {
+    "message": "sk-..."
+  },
+  "targetLanguageLabel": {
+    "message": "Target language"
+  },
+  "languageZhCn": {
+    "message": "Simplified Chinese"
+  },
+  "languageZhTw": {
+    "message": "Traditional Chinese"
+  },
+  "modelLabel": {
+    "message": "Model"
+  },
+  "translateCurrentPageButton": {
+    "message": "Translate page"
+  },
+  "restoreOriginalButton": {
+    "message": "Restore original"
+  },
+  "clearCacheButton": {
+    "message": "Clear cache"
+  },
+  "saveSettingsButton": {
+    "message": "Save settings"
+  },
+  "enabledSitesTitle": {
+    "message": "Enabled sites"
+  },
+  "emptyEnabledSites": {
+    "message": "No enabled sites yet"
+  },
+  "disableSiteButton": {
+    "message": "Disable"
+  },
+  "deleteSiteButton": {
+    "message": "Delete"
+  },
+  "siteTargetLanguage": {
+    "message": "Target language: $LANG$",
+    "placeholders": {
+      "lang": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusSettingsSaved": {
+    "message": "Settings saved"
+  },
+  "statusDomainEnabled": {
+    "message": "Enabled for current domain"
+  },
+  "statusDomainDisabled": {
+    "message": "Disabled for current domain"
+  },
+  "statusTranslatingPage": {
+    "message": "Translating current page"
+  },
+  "statusRestoreAttempted": {
+    "message": "Tried to restore original text"
+  },
+  "statusCacheCleared": {
+    "message": "Cache cleared"
+  },
+  "statusSiteDisabled": {
+    "message": "Disabled $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusSiteDeleted": {
+    "message": "Deleted $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusCannotInjectScript": {
+    "message": "Cannot inject the translator script into this page"
+  },
+  "spinnerTranslating": {
+    "message": "Translating"
+  },
+  "errorMissingApiKey": {
+    "message": "Please enter your DeepSeek API Key in the extension popup"
+  },
+  "errorTranslationFailed": {
+    "message": "Translation request failed"
+  },
+  "errorDeepSeekRequestFailed": {
+    "message": "DeepSeek request failed: $STATUS$ $DETAIL$",
+    "placeholders": {
+      "status": {
+        "content": "$1"
+      },
+      "detail": {
+        "content": "$2"
+      }
+    }
+  }
+}

@@ -1,27 +1,36 @@
 # DeepSeek Page Translator
 
-一个本地自用的 Chrome MV3 页面翻译插件。它可以为当前域名开启持续翻译，之后访问同域名页面时会自动翻译新增内容。
+A Chrome MV3 extension that translates web pages with DeepSeek. It supports one-click page translation, per-domain continuous translation, local IndexedDB translation memory, model-aware cache keys, and restoring the original page text.
 
-## 使用方式
+中文说明：[DeepSeek 页面翻译插件使用说明](DeepSeek页面翻译插件使用说明.md)
 
-1. 打开 Chrome `chrome://extensions/`。
-2. 开启「开发者模式」。
-3. 点击「加载已解压的扩展程序」。
-4. 选择本目录：`the extension directory`。
-5. 打开任意网页，点击插件图标，填写 DeepSeek API Key。
-6. 选择目标语言，打开当前域名开关，或点击「翻译当前页」。
+Full English guide: [DeepSeek Page Translator User Guide](DeepSeek%20Page%20Translator%20User%20Guide.md)
 
-## 功能
+## Features
 
-- 当前域名持续翻译开关
-- 页面新增内容增量翻译
-- SPA 地址变化后自动补翻
-- IndexedDB 本地翻译记忆库
-- 支持恢复当前页原文
-- 支持 `deepseek-v4-flash` 和 `deepseek-v4-pro`
+- Configure your own DeepSeek API Key locally.
+- Translate the current page on demand.
+- Enable continuous translation for the current domain.
+- Translate newly added content on dynamic pages and SPAs.
+- Cache translations in the extension's IndexedDB database.
+- Restore original text on the current page.
+- Clear cache for the current domain.
+- Use `deepseek-v4-flash` or `deepseek-v4-pro`.
+- Localized extension UI: Simplified Chinese for `zh-CN`, English for other browser UI languages.
 
-## 注意
+## Install Locally
 
-这是自用版本，API Key 保存在 `chrome.storage.local`。不要把插件目录、打包文件或截图分享给其他人。
+1. Open Chrome and visit `chrome://extensions/`.
+2. Enable Developer mode.
+3. Click Load unpacked.
+4. Select this extension directory, the folder that contains `manifest.json`.
+5. Open any web page, click the extension icon, and enter your DeepSeek API Key.
+6. Choose a target language, then enable the current domain switch or click Translate page.
 
-翻译缓存保存在 Chrome 扩展自己的 IndexedDB 里，不会在本目录生成数据库文件。首次使用时 Chrome 会自动创建数据库：`deepseek-page-translator`，对象仓库为 `translations`。
+## Privacy Notes
+
+Your API Key is stored in your own browser with `chrome.storage.local`. It is not written to this project directory or to packaged ZIP files.
+
+Visible page text that needs translation is sent to the DeepSeek API. Translation cache is stored in the extension's own IndexedDB database named `deepseek-page-translator`, object store `translations`.
+
+Do not commit API Keys, browser profile data, screenshots containing keys, or packaged ZIP files.

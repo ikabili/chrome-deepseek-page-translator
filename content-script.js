@@ -71,7 +71,7 @@
   async function startTranslator(forceScan) {
     const siteConfig = await chrome.runtime.sendMessage({ type: "translator:get-site-config" });
     if (!siteConfig?.hasApiKey) {
-      return { ok: false, error: "missing api key" };
+      return { ok: false, error: t("errorMissingApiKey") };
     }
 
     state.enabled = true;
@@ -239,7 +239,7 @@
           });
 
           if (response?.ok) applyTranslations(nodes, response.items || []);
-          if (response?.ok === false) showTranslatorNotice(response.error || "翻译请求失败");
+          if (response?.ok === false) showTranslatorNotice(response.error || t("errorTranslationFailed"));
         }
       }
     } catch (error) {
@@ -319,8 +319,8 @@
     const indicator = document.createElement("span");
     indicator.setAttribute("data-deepseek-translator-ignore", "true");
     indicator.className = "deepseek-translator-spinner";
-    indicator.title = "正在翻译";
-    indicator.setAttribute("aria-label", "正在翻译");
+    indicator.title = t("spinnerTranslating");
+    indicator.setAttribute("aria-label", t("spinnerTranslating"));
     indicator.setAttribute("role", "status");
     indicator.innerHTML = [
       "<span class=\"deepseek-translator-spinner-dot\"></span>"
@@ -450,5 +450,9 @@
     const leading = String(original).match(/^\s*/)?.[0] || "";
     const trailing = String(original).match(/\s*$/)?.[0] || "";
     return `${leading}${replacement}${trailing}`;
+  }
+
+  function t(key, substitutions) {
+    return chrome.i18n.getMessage(key, substitutions) || key;
   }
 })();

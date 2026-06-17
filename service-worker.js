@@ -231,7 +231,7 @@ function getSessionStorage() {
 async function translateBatch(items, targetLang, sender) {
   const config = await getConfig();
   if (!config.apiKey) {
-    throw new Error("请先在插件弹窗里填写 DeepSeek API Key");
+    throw new Error(t("errorMissingApiKey"));
   }
 
   const host = getSenderHost(sender);
@@ -378,7 +378,7 @@ async function requestDeepSeek(items, targetLang, config) {
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`DeepSeek 请求失败：${response.status} ${detail.slice(0, 200)}`);
+    throw new Error(t("errorDeepSeekRequestFailed", [String(response.status), detail.slice(0, 200)]));
   }
 
   const data = await response.json();
@@ -754,4 +754,8 @@ function hasNumberEnglishContext(text, matches) {
 
 function normalizeNumber(number) {
   return String(number).replace(/,/g, "").toLowerCase();
+}
+
+function t(key, substitutions) {
+  return chrome.i18n.getMessage(key, substitutions) || key;
 }

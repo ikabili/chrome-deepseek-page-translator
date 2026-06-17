@@ -1,0 +1,130 @@
+{
+  "extensionName": {
+    "message": "DeepSeek 页面翻译"
+  },
+  "extensionDescription": {
+    "message": "使用 DeepSeek 按域名持续翻译网页。"
+  },
+  "extensionActionTitle": {
+    "message": "DeepSeek 翻译"
+  },
+  "popupTitle": {
+    "message": "DeepSeek 翻译"
+  },
+  "domainLoading": {
+    "message": "读取当前域名中..."
+  },
+  "domainUnavailable": {
+    "message": "当前页面不可用"
+  },
+  "domainSwitchTitle": {
+    "message": "为当前域名开启持续翻译"
+  },
+  "apiKeyLabel": {
+    "message": "API Key"
+  },
+  "apiKeyPlaceholder": {
+    "message": "sk-..."
+  },
+  "targetLanguageLabel": {
+    "message": "目标语言"
+  },
+  "languageZhCn": {
+    "message": "简体中文"
+  },
+  "languageZhTw": {
+    "message": "繁体中文"
+  },
+  "modelLabel": {
+    "message": "模型"
+  },
+  "translateCurrentPageButton": {
+    "message": "翻译当前页"
+  },
+  "restoreOriginalButton": {
+    "message": "恢复原文"
+  },
+  "clearCacheButton": {
+    "message": "清除缓存"
+  },
+  "saveSettingsButton": {
+    "message": "保存设置"
+  },
+  "enabledSitesTitle": {
+    "message": "已开启的网站"
+  },
+  "emptyEnabledSites": {
+    "message": "暂无已开启的网站"
+  },
+  "disableSiteButton": {
+    "message": "关闭"
+  },
+  "deleteSiteButton": {
+    "message": "删除"
+  },
+  "siteTargetLanguage": {
+    "message": "目标语言：$LANG$",
+    "placeholders": {
+      "lang": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusSettingsSaved": {
+    "message": "设置已保存"
+  },
+  "statusDomainEnabled": {
+    "message": "已为当前域名开启"
+  },
+  "statusDomainDisabled": {
+    "message": "已为当前域名关闭"
+  },
+  "statusTranslatingPage": {
+    "message": "正在翻译当前页"
+  },
+  "statusRestoreAttempted": {
+    "message": "已尝试恢复原文"
+  },
+  "statusCacheCleared": {
+    "message": "缓存已清除"
+  },
+  "statusSiteDisabled": {
+    "message": "已关闭 $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusSiteDeleted": {
+    "message": "已删除 $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusCannotInjectScript": {
+    "message": "当前页面无法注入翻译脚本"
+  },
+  "spinnerTranslating": {
+    "message": "正在翻译"
+  },
+  "errorMissingApiKey": {
+    "message": "请先在插件弹窗里填写 DeepSeek API Key"
+  },
+  "errorTranslationFailed": {
+    "message": "翻译请求失败"
+  },
+  "errorDeepSeekRequestFailed": {
+    "message": "DeepSeek 请求失败：$STATUS$ $DETAIL$",
+    "placeholders": {
+      "status": {
+        "content": "$1"
+      },
+      "detail": {
+        "content": "$2"
+      }
+    }
+  }
+}
