@@ -8,12 +8,15 @@ const DEFAULT_CONFIG = {
 const DB_NAME = "deepseek-page-translator";
 const DB_VERSION = 1;
 const TRANSLATIONS_STORE = "translations";
-const MAX_ITEMS_PER_REQUEST = 30;
-const MAX_PARALLEL_REQUESTS = 3;
+const MAX_ITEMS_PER_REQUEST = 20;
+const MAX_PARALLEL_REQUESTS = 5;
 const CACHE_TTL_DAYS = 90;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const PAGE_TRANSLATED_PREFIX = "pageTranslated:";
+const LOCAL_PATTERN_KEY_PREFIX = "local-pattern";
+const NUMBER_TOKEN_RE = /[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const NUMBER_PLACEHOLDER_RE = /\{\{n(\d+)\}\}/g;
 const ACTION_ICONS = {
   enabled: {
     16: "icons/deepseek-blue-16.png",
@@ -80,6 +83,7 @@ async function handleMessage(message, sender) {
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   updateActionIconForTab(tabId);
+  translateActivatedTab(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -93,6 +97,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes.translatorConfig) {
+    stopTabsForDisabledHosts(changes.translatorConfig.oldValue, changes.translatorConfig.newValue);
     updateActionIconsForOpenTabs();
   }
 });
@@ -100,6 +105,67 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 async function updateActionIconsForOpenTabs() {
   const tabs = await chrome.tabs.query({});
   await Promise.all(tabs.map((tab) => updateActionIconForTab(tab.id, tab)));
+}
+
+async function stopTabsForDisabledHosts(oldConfig = {}, newConfig = {}) {
+  const disabledHosts = getDisabledHosts(oldConfig, newConfig);
+  if (!disabledHosts.length) return;
+
+  const disabledHostSet = new Set(disabledHosts);
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map(async (tab) => {
+    const host = getHostFromUrl(tab?.url);
+    if (!host || !disabledHostSet.has(host)) return;
+
+    await clearPageTranslated(tab.id);
+    await sendMessageToTab(tab.id, { type: "translator:stop" });
+    await updateActionIconForTab(tab.id, tab);
+  }));
+}
+
+function getDisabledHosts(oldConfig = {}, newConfig = {}) {
+  const oldSites = oldConfig?.sites || {};
+  const newSites = newConfig?.sites || {};
+  return Object.entries(oldSites)
+    .filter(([host, site]) => site?.enabled && !newSites?.[host]?.enabled)
+    .map(([host]) => host);
+}
+
+async function translateActivatedTab(tabId) {
+  if (!tabId) return;
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return;
+  }
+
+  const host = getHostFromUrl(tab?.url);
+  if (!host || !canRunOnUrl(tab?.url)) return;
+
+  const config = await getConfig();
+  const shouldTranslate = Boolean(config.sites?.[host]?.enabled) || await isPageTranslated(tabId, tab.url);
+  if (!shouldTranslate) return;
+
+  await sendMessageToTab(tabId, { type: "translator:activated-tab", forceStart: true });
+}
+
+async function sendMessageToTab(tabId, message) {
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+    return;
+  } catch {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["content-script.js"]
+      });
+      await chrome.tabs.sendMessage(tabId, message);
+    } catch {
+      // Some Chrome pages and restricted URLs cannot receive content scripts.
+    }
+  }
 }
 
 async function updateActionIconForTab(tabId, knownTab) {
@@ -170,7 +236,8 @@ async function translateBatch(items, targetLang, sender) {
 
   const host = getSenderHost(sender);
   const lang = targetLang || config.sites?.[host]?.targetLang || config.targetLang;
-  const keyedItems = await prepareCacheItems(items, host, lang);
+  const model = config.model || DEFAULT_CONFIG.model;
+  const keyedItems = await prepareCacheItems(items, host, lang, model);
   const results = [];
   const missing = [];
   const cachedRecords = await getCachedTranslations(keyedItems);
@@ -201,6 +268,8 @@ async function translateBatch(items, targetLang, sender) {
         updatedAt: Date.now(),
         hitCount: 0
       });
+      const localPatternRecord = buildLocalPatternRecord(source, result.translation, host, lang);
+      if (localPatternRecord) recordsToSave.push(localPatternRecord);
       results.push({ id: source.id, translation: result.translation });
     }
   }
@@ -213,7 +282,8 @@ async function getCachedBatch(items, targetLang, sender) {
   const config = await getConfig();
   const host = getSenderHost(sender);
   const lang = targetLang || config.sites?.[host]?.targetLang || config.targetLang;
-  const keyedItems = await prepareCacheItems(items, host, lang);
+  const model = config.model || DEFAULT_CONFIG.model;
+  const keyedItems = await prepareCacheItems(items, host, lang, model);
   const cachedRecords = await getCachedTranslations(keyedItems);
   const cachedItems = [];
   const missingIds = [];
@@ -230,7 +300,7 @@ async function getCachedBatch(items, targetLang, sender) {
   return { ok: true, items: cachedItems, missingIds };
 }
 
-async function prepareCacheItems(items, host, targetLang) {
+async function prepareCacheItems(items, host, targetLang, model) {
   const normalizedItems = items
     .map((item) => ({
       id: String(item.id),
@@ -242,7 +312,8 @@ async function prepareCacheItems(items, host, targetLang) {
     normalizedItems.map(async (item) => ({
       ...item,
       textHash: await sha256(item.text),
-      key: await cacheKey(host, targetLang, item.text)
+      key: await cacheKey(host, targetLang, model, item.text),
+      localPattern: await prepareLocalPattern(item.text, host, targetLang, model)
     }))
   );
 }
@@ -330,6 +401,19 @@ async function getCachedTranslations(items) {
 
   await cleanupExpiredTranslationsIfNeeded();
 
+  const records = await getDirectCachedTranslations(items);
+  const patternItems = items.filter((item) => !records.has(item.key) && item.localPattern?.key);
+  const patternRecords = await getPatternCachedTranslations(patternItems);
+  for (const [key, record] of patternRecords) {
+    records.set(key, record);
+  }
+
+  return records;
+}
+
+async function getDirectCachedTranslations(items) {
+  if (!items.length) return new Map();
+
   const db = await openTranslationsDb();
   const transaction = db.transaction(TRANSLATIONS_STORE, "readwrite");
   const store = transaction.objectStore(TRANSLATIONS_STORE);
@@ -345,6 +429,39 @@ async function getCachedTranslations(items) {
         record.updatedAt = now;
         store.put(record);
         records.set(item.key, record);
+      }
+      resolve();
+    };
+    request.onerror = () => reject(request.error);
+  })));
+
+  await waitForTransaction(transaction);
+  return records;
+}
+
+async function getPatternCachedTranslations(items) {
+  if (!items.length) return new Map();
+
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(TRANSLATIONS_STORE, "readwrite");
+  const store = transaction.objectStore(TRANSLATIONS_STORE);
+  const records = new Map();
+  const now = Date.now();
+
+  await Promise.all(items.map((item) => new Promise((resolve, reject) => {
+    const request = store.get(item.localPattern.key);
+    request.onsuccess = () => {
+      const record = request.result;
+      const translation = hydrateLocalPattern(record, item.localPattern.numbers);
+      if (translation) {
+        record.hitCount = (record.hitCount || 0) + 1;
+        record.updatedAt = now;
+        store.put(record);
+        records.set(item.key, {
+          ...record,
+          key: item.key,
+          translation
+        });
       }
       resolve();
     };
@@ -434,9 +551,14 @@ async function cleanupExpiredTranslations(expireBefore) {
   await waitForTransaction(transaction);
 }
 
-async function cacheKey(host, targetLang, text) {
+async function cacheKey(host, targetLang, model, text) {
   const hash = await sha256(text);
-  return `${host}:${targetLang}:${hash}`;
+  return `${host}:${targetLang}:${model}:${hash}`;
+}
+
+async function localPatternKey(host, targetLang, model, sourceTemplate) {
+  const hash = await sha256(sourceTemplate);
+  return `${LOCAL_PATTERN_KEY_PREFIX}:${host}:${targetLang}:${model}:${hash}`;
 }
 
 function openTranslationsDb() {
@@ -492,6 +614,15 @@ function getHostFromUrl(url) {
   }
 }
 
+function canRunOnUrl(url) {
+  try {
+    const protocol = new URL(url || "").protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "file:";
+  } catch {
+    return false;
+  }
+}
+
 function normalizeUrlForPageState(url) {
   try {
     const parsed = new URL(url || "");
@@ -504,4 +635,123 @@ function normalizeUrlForPageState(url) {
 
 function normalizeText(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+async function prepareLocalPattern(text, host, targetLang, model) {
+  const sourcePattern = createNumberPattern(text);
+  if (!sourcePattern) return null;
+
+  return {
+    ...sourcePattern,
+    key: await localPatternKey(host, targetLang, model, sourcePattern.template)
+  };
+}
+
+function buildLocalPatternRecord(source, translation, host, targetLang) {
+  if (!source.localPattern?.key) return null;
+
+  const translationPattern = createTranslationPattern(translation, source.localPattern.numbers);
+  if (!translationPattern) return null;
+
+  const now = Date.now();
+  return {
+    key: source.localPattern.key,
+    host,
+    targetLang,
+    textHash: `local-pattern:${source.localPattern.template}`,
+    sourceText: source.localPattern.template,
+    sourcePattern: source.localPattern.template,
+    translation: translationPattern,
+    translationPattern,
+    localPattern: true,
+    createdAt: now,
+    updatedAt: now,
+    hitCount: 0
+  };
+}
+
+function createNumberPattern(text) {
+  const source = normalizeText(text);
+  const matches = collectNumberMatches(source);
+  if (!matches.length || !hasNumberEnglishContext(source, matches)) return null;
+
+  let template = "";
+  let cursor = 0;
+  const numbers = [];
+
+  matches.forEach((match, index) => {
+    template += source.slice(cursor, match.index);
+    template += `{{n${index}}}`;
+    cursor = match.index + match.value.length;
+    numbers.push(match.value);
+  });
+  template += source.slice(cursor);
+
+  return { template, numbers };
+}
+
+function createTranslationPattern(translation, sourceNumbers) {
+  const text = normalizeText(translation);
+  const matches = collectNumberMatches(text);
+  if (matches.length !== sourceNumbers.length) return null;
+
+  const used = new Set();
+  let template = "";
+  let cursor = 0;
+
+  for (const match of matches) {
+    const sourceIndex = sourceNumbers.findIndex((number, index) => {
+      return !used.has(index) && normalizeNumber(number) === normalizeNumber(match.value);
+    });
+    if (sourceIndex === -1) return null;
+
+    used.add(sourceIndex);
+    template += text.slice(cursor, match.index);
+    template += `{{n${sourceIndex}}}`;
+    cursor = match.index + match.value.length;
+  }
+
+  template += text.slice(cursor);
+  return template;
+}
+
+function hydrateLocalPattern(record, numbers) {
+  if (!record?.localPattern || !record.translationPattern || !Array.isArray(numbers)) return "";
+
+  const seen = new Set();
+  const translation = record.translationPattern.replace(NUMBER_PLACEHOLDER_RE, (_match, indexText) => {
+    const index = Number(indexText);
+    if (!Number.isInteger(index) || index < 0 || index >= numbers.length) return "";
+    seen.add(index);
+    return numbers[index];
+  });
+
+  return seen.size === numbers.length ? translation : "";
+}
+
+function collectNumberMatches(text) {
+  const matches = [];
+  NUMBER_TOKEN_RE.lastIndex = 0;
+
+  let match = NUMBER_TOKEN_RE.exec(text);
+  while (match) {
+    matches.push({ value: match[0], index: match.index });
+    match = NUMBER_TOKEN_RE.exec(text);
+  }
+
+  return matches;
+}
+
+function hasNumberEnglishContext(text, matches) {
+  if (!/[A-Za-z]/.test(text)) return false;
+
+  return matches.some((match) => {
+    const left = text.slice(Math.max(0, match.index - 8), match.index);
+    const right = text.slice(match.index + match.value.length, match.index + match.value.length + 8);
+    return /[A-Za-z]/.test(left) || /[A-Za-z]/.test(right);
+  });
+}
+
+function normalizeNumber(number) {
+  return String(number).replace(/,/g, "").toLowerCase();
 }

@@ -41,12 +41,18 @@
 
     if (message?.type === "translator:stop") {
       stopTranslator(false);
+      markPageTranslated(false);
       sendResponse({ ok: true });
     }
 
     if (message?.type === "translator:restore") {
       stopTranslator(true);
       sendResponse({ ok: true });
+    }
+
+    if (message?.type === "translator:activated-tab") {
+      resumeTranslatorForActiveTab(Boolean(message.forceStart)).then(sendResponse);
+      return true;
     }
 
     return undefined;
@@ -78,6 +84,20 @@
     }
     scheduleFlush(120);
     return { ok: true };
+  }
+
+  async function resumeTranslatorForActiveTab(forceStart) {
+    const siteConfig = await chrome.runtime.sendMessage({ type: "translator:get-site-config" });
+    if (forceStart || siteConfig?.enabled) {
+      return startTranslator(true);
+    }
+
+    if (!siteConfig?.enabled) {
+      if (!state.enabled) return { ok: true };
+      scanAndQueue(document.body);
+      scheduleFlush(120);
+      return { ok: true };
+    }
   }
 
   function stopTranslator(restoreOriginal) {
