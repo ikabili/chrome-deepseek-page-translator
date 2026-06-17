@@ -6,11 +6,9 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "storage",
-    "unlimitedStorage"
+    "storage"
   ],
   "host_permissions": [
-    "<all_urls>",
     "https://api.deepseek.com/*"
   ],
   "action": {
