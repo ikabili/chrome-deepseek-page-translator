@@ -8,10 +8,13 @@
     observer: null,
     nodeMap: new WeakMap(),
     pendingNodes: new Set(),
+    activeNodeIds: new Set(),
     loadingNodes: new Map(),
     flushTimer: 0,
+    visibleFlushTimer: 0,
     nextId: 1,
     inFlight: false,
+    visibleInFlight: false,
     lastHref: location.href,
     readyRescansInstalled: false
   };
@@ -19,7 +22,10 @@
   const INITIAL_FLUSH_DELAY_MS = 100;
   const MUTATION_FLUSH_DELAY_MS = 350;
   const URL_CHANGE_FLUSH_DELAY_MS = 250;
+  const SCROLL_FLUSH_DELAY_MS = 120;
   const MAX_NODES_PER_FLUSH = 80;
+  const MAX_VISIBLE_NODES_PER_FLUSH = 40;
+  const MAX_ITEMS_PER_TRANSLATE_REQUEST = 20;
 
   const BLOCKED_TAGS = new Set([
     "SCRIPT",
@@ -85,10 +91,12 @@
     installObserver();
     installUrlWatcher();
     installReadyStateRescans();
+    installViewportWatcher();
 
     if (forceScan || state.pendingNodes.size === 0) {
       scanCurrentDocument();
     }
+    updateActionIcon();
     scheduleFlush(INITIAL_FLUSH_DELAY_MS);
     return { ok: true };
   }
@@ -110,8 +118,10 @@
   function stopTranslator(restoreOriginal) {
     state.enabled = false;
     state.pendingNodes.clear();
+    state.activeNodeIds.clear();
     clearLoadingIndicators();
     if (state.flushTimer) window.clearTimeout(state.flushTimer);
+    if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
     if (state.observer) {
       state.observer.disconnect();
       state.observer = null;
@@ -159,6 +169,19 @@
         scheduleFlush(URL_CHANGE_FLUSH_DELAY_MS);
       }, 350);
     }, 800);
+  }
+
+  function installViewportWatcher() {
+    if (window.__deepseekTranslatorViewportWatcher) return;
+    const onViewportChange = () => {
+      if (!state.enabled) return;
+      if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
+      state.visibleFlushTimer = window.setTimeout(flushVisibleQueue, SCROLL_FLUSH_DELAY_MS);
+    };
+
+    window.__deepseekTranslatorViewportWatcher = onViewportChange;
+    window.addEventListener("scroll", onViewportChange, { passive: true });
+    window.addEventListener("resize", onViewportChange, { passive: true });
   }
 
   function installReadyStateRescans() {
@@ -237,51 +260,99 @@
     if (!state.enabled || state.inFlight || state.pendingNodes.size === 0) return;
     state.inFlight = true;
 
-    const nodes = takeNextPendingNodes();
+    try {
+      await flushNodes(takeNextPendingNodes(MAX_NODES_PER_FLUSH, false), "normal");
+    } catch (error) {
+      showTranslatorNotice(error.message || String(error));
+    } finally {
+      state.inFlight = false;
+      if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+    }
+  }
 
+  async function flushVisibleQueue() {
+    state.visibleFlushTimer = 0;
+    if (!state.enabled || state.visibleInFlight) return;
+
+    scanCurrentDocument();
+    state.visibleInFlight = true;
+
+    try {
+      await flushNodes(takeNextPendingNodes(MAX_VISIBLE_NODES_PER_FLUSH, true), "visible");
+    } catch (error) {
+      showTranslatorNotice(error.message || String(error));
+    } finally {
+      state.visibleInFlight = false;
+      if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+    }
+  }
+
+  async function flushNodes(nodes, priority) {
     const items = nodes
       .map((node) => state.nodeMap.get(node))
       .filter((record) => record && record.original && !record.translated)
       .map((record) => ({ id: record.id, text: record.original }));
 
     try {
-      if (items.length) {
-        const cachedResponse = await chrome.runtime.sendMessage({
-          type: "translator:get-cached",
-          targetLang: state.targetLang,
-          items
-        });
+      if (!items.length) return;
 
-        if (cachedResponse?.ok) {
-          applyTranslations(nodes, cachedResponse.items || []);
-        } else if (cachedResponse?.error) {
-          showTranslatorNotice(cachedResponse.error);
+      const cachedResponse = await chrome.runtime.sendMessage({
+        type: "translator:get-cached",
+        targetLang: state.targetLang,
+        items
+      });
+
+      if (cachedResponse?.ok) {
+        if (!state.enabled) return;
+        applyTranslations(nodes, cachedResponse.items || []);
+      } else if (cachedResponse?.error) {
+        showTranslatorNotice(cachedResponse.error);
+      }
+
+      const missingIds = new Set(cachedResponse?.missingIds || items.map((item) => item.id));
+      const missingItems = items.filter((item) => missingIds.has(item.id));
+      if (missingItems.length) {
+        const nodesById = new Map();
+        for (const node of nodes) {
+          const record = state.nodeMap.get(node);
+          if (record) nodesById.set(record.id, node);
         }
 
-        const missingIds = new Set(cachedResponse?.missingIds || items.map((item) => item.id));
-        const missingItems = items.filter((item) => missingIds.has(item.id));
-        if (missingItems.length) {
-          showLoadingForItems(nodes, missingItems);
+        showLoadingForItems(nodes, missingItems);
+        await Promise.all(chunkItems(missingItems, MAX_ITEMS_PER_TRANSLATE_REQUEST).map(async (chunk) => {
           const response = await chrome.runtime.sendMessage({
             type: "translator:translate",
             targetLang: state.targetLang,
-            items: missingItems
+            priority,
+            items: chunk
           });
 
-          if (response?.ok) applyTranslations(nodes, response.items || []);
+          if (!state.enabled) return;
+          if (response?.ok) {
+            const chunkNodes = chunk
+              .map((item) => nodesById.get(String(item.id)))
+              .filter(Boolean);
+            applyTranslations(chunkNodes, response.items || []);
+            clearLoadingForNodes(chunkNodes);
+          }
           if (response?.ok === false) showTranslatorNotice(response.error || t("errorTranslationFailed"));
-        }
+        }));
       }
-    } catch (error) {
-      showTranslatorNotice(error.message || String(error));
     } finally {
       clearLoadingForNodes(nodes);
-      state.inFlight = false;
-      if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+      releaseActiveNodes(nodes);
     }
   }
 
-  function takeNextPendingNodes() {
+  function chunkItems(items, size) {
+    const chunks = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
+  }
+
+  function takeNextPendingNodes(limit, visibleOnly) {
     const candidates = [];
 
     for (const node of state.pendingNodes) {
@@ -296,18 +367,33 @@
         continue;
       }
 
+      if (state.activeNodeIds.has(record.id)) continue;
+
       const priority = getNodePriority(node);
       if (priority === Number.POSITIVE_INFINITY) {
         state.pendingNodes.delete(node);
         continue;
       }
+
+      if (visibleOnly && priority !== 0) continue;
       candidates.push({ node, priority });
     }
 
     candidates.sort((left, right) => left.priority - right.priority);
-    const selected = candidates.slice(0, MAX_NODES_PER_FLUSH).map((candidate) => candidate.node);
-    selected.forEach((node) => state.pendingNodes.delete(node));
+    const selected = candidates.slice(0, limit).map((candidate) => candidate.node);
+    selected.forEach((node) => {
+      const record = state.nodeMap.get(node);
+      if (record) state.activeNodeIds.add(record.id);
+      state.pendingNodes.delete(node);
+    });
     return selected;
+  }
+
+  function releaseActiveNodes(nodes) {
+    for (const node of nodes) {
+      const record = state.nodeMap.get(node);
+      if (record) state.activeNodeIds.delete(record.id);
+    }
   }
 
   function getNodePriority(node) {
@@ -377,6 +463,13 @@
     chrome.runtime.sendMessage({
       type: "translator:set-page-translated",
       translated,
+      url: location.href
+    }).catch(() => {});
+  }
+
+  function updateActionIcon() {
+    chrome.runtime.sendMessage({
+      type: "translator:update-action-icon",
       url: location.href
     }).catch(() => {});
   }

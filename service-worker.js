@@ -8,8 +8,9 @@ const DEFAULT_CONFIG = {
 const DB_NAME = "deepseek-page-translator";
 const DB_VERSION = 1;
 const TRANSLATIONS_STORE = "translations";
-const MAX_ITEMS_PER_REQUEST = 20;
 const MAX_PARALLEL_REQUESTS = 5;
+const RESERVED_VISIBLE_REQUESTS = 1;
+const MAX_NORMAL_PARALLEL_REQUESTS = MAX_PARALLEL_REQUESTS - RESERVED_VISIBLE_REQUESTS;
 const CACHE_TTL_DAYS = 90;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -29,6 +30,16 @@ const ACTION_ICONS = {
     32: "icons/deepseek-gray-32.png",
     48: "icons/deepseek-gray-48.png",
     128: "icons/deepseek-gray-128.png"
+  }
+};
+
+const translationScheduler = {
+  activeTotal: 0,
+  activeNormal: 0,
+  activeVisible: 0,
+  queues: {
+    visible: [],
+    normal: []
   }
 };
 
@@ -53,7 +64,10 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "translator:translate") {
-    return translateBatch(message.items || [], message.targetLang, sender);
+    return translateBatch(message.items || [], message.targetLang, sender, {
+      priority: message.priority,
+      checkCache: Boolean(message.checkCache)
+    });
   }
 
   if (message?.type === "translator:get-cached") {
@@ -66,15 +80,15 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "translator:update-action-icon") {
-    await updateActionIconForTab(sender?.tab?.id || message.tabId);
+    await updateActionIconForTab(sender?.tab?.id || message.tabId, undefined, message.url);
     return { ok: true };
   }
 
   if (message?.type === "translator:set-page-translated") {
     const tabId = sender?.tab?.id || message.tabId;
-    const url = sender?.tab?.url || sender?.url || message.url;
+    const url = message.url || sender?.url || sender?.tab?.url;
     await setPageTranslated(tabId, url, Boolean(message.translated));
-    await updateActionIconForTab(tabId);
+    await updateActionIconForTab(tabId, undefined, url);
     return { ok: true };
   }
 
@@ -168,11 +182,11 @@ async function sendMessageToTab(tabId, message) {
   }
 }
 
-async function updateActionIconForTab(tabId, knownTab) {
+async function updateActionIconForTab(tabId, knownTab, knownUrl) {
   if (!tabId) return;
 
   let tab = knownTab;
-  if (!tab?.url) {
+  if (!knownUrl && !tab?.url) {
     try {
       tab = await chrome.tabs.get(tabId);
     } catch {
@@ -180,10 +194,11 @@ async function updateActionIconForTab(tabId, knownTab) {
     }
   }
 
-  const host = getHostFromUrl(tab?.url);
+  const url = knownUrl || tab?.url;
+  const host = getHostFromUrl(url);
   const config = await getConfig();
   const siteEnabled = Boolean(host && config.sites?.[host]?.enabled);
-  const pageTranslated = await isPageTranslated(tabId, tab?.url);
+  const pageTranslated = await isPageTranslated(tabId, url);
   const enabled = siteEnabled || pageTranslated;
   await chrome.action.setIcon({
     tabId,
@@ -228,7 +243,7 @@ function getSessionStorage() {
   return chrome.storage.session || chrome.storage.local;
 }
 
-async function translateBatch(items, targetLang, sender) {
+async function translateBatch(items, targetLang, sender, options = {}) {
   const config = await getConfig();
   if (!config.apiKey) {
     throw new Error(t("errorMissingApiKey"));
@@ -238,41 +253,48 @@ async function translateBatch(items, targetLang, sender) {
   const lang = targetLang || config.sites?.[host]?.targetLang || config.targetLang;
   const model = config.model || DEFAULT_CONFIG.model;
   const keyedItems = await prepareCacheItems(items, host, lang, model);
+  const priority = normalizePriority(options.priority);
   const results = [];
-  const missing = [];
-  const cachedRecords = await getCachedTranslations(keyedItems);
+  let missing = keyedItems;
 
-  for (const item of keyedItems) {
-    const cached = cachedRecords.get(item.key);
-    if (cached?.translation) {
-      results.push({ id: item.id, translation: cached.translation });
-    } else {
-      missing.push(item);
+  if (options.checkCache) {
+    const cachedRecords = await getCachedTranslations(keyedItems);
+    missing = [];
+
+    for (const item of keyedItems) {
+      const cached = cachedRecords.get(item.key);
+      if (cached?.translation) {
+        results.push({ id: item.id, translation: cached.translation });
+      } else {
+        missing.push(item);
+      }
     }
   }
 
-  const translatedChunks = await translateChunksConcurrently(missing, lang, config);
+  const translated = missing.length
+    ? await scheduleDeepSeekRequest(missing, lang, config, priority)
+    : [];
   const recordsToSave = [];
-  for (const { chunk, translated } of translatedChunks) {
-    for (const result of translated) {
-      const source = chunk.find((item) => item.id === String(result.id));
-      if (!source || !result.translation) continue;
-      recordsToSave.push({
-        key: source.key,
-        host,
-        targetLang: lang,
-        textHash: source.textHash,
-        sourceText: source.text,
-        translation: result.translation,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        hitCount: 0
-      });
-      const localPatternRecord = buildLocalPatternRecord(source, result.translation, host, lang);
-      if (localPatternRecord) recordsToSave.push(localPatternRecord);
-      results.push({ id: source.id, translation: result.translation });
-    }
+
+  for (const result of translated) {
+    const source = missing.find((item) => item.id === String(result.id));
+    if (!source || !result.translation) continue;
+    recordsToSave.push({
+      key: source.key,
+      host,
+      targetLang: lang,
+      textHash: source.textHash,
+      sourceText: source.text,
+      translation: result.translation,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      hitCount: 0
+    });
+    const localPatternRecord = buildLocalPatternRecord(source, result.translation, host, lang);
+    if (localPatternRecord) recordsToSave.push(localPatternRecord);
+    results.push({ id: source.id, translation: result.translation });
   }
+
   await setCachedTranslations(recordsToSave);
 
   return { ok: true, items: results };
@@ -318,31 +340,64 @@ async function prepareCacheItems(items, host, targetLang, model) {
   );
 }
 
-async function translateChunksConcurrently(items, targetLang, config) {
-  const chunks = [];
-  for (let i = 0; i < items.length; i += MAX_ITEMS_PER_REQUEST) {
-    chunks.push(items.slice(i, i + MAX_ITEMS_PER_REQUEST));
+function scheduleDeepSeekRequest(items, targetLang, config, priority) {
+  return new Promise((resolve, reject) => {
+    translationScheduler.queues[priority].push({
+      items,
+      targetLang,
+      config,
+      priority,
+      resolve,
+      reject
+    });
+    runScheduledRequests();
+  });
+}
+
+function runScheduledRequests() {
+  while (translationScheduler.activeTotal < MAX_PARALLEL_REQUESTS) {
+    const task = takeNextScheduledTask();
+    if (!task) return;
+
+    translationScheduler.activeTotal += 1;
+    if (task.priority === "normal") translationScheduler.activeNormal += 1;
+    if (task.priority === "visible") translationScheduler.activeVisible += 1;
+
+    requestDeepSeek(task.items, task.targetLang, task.config)
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        translationScheduler.activeTotal -= 1;
+        if (task.priority === "normal") translationScheduler.activeNormal -= 1;
+        if (task.priority === "visible") translationScheduler.activeVisible -= 1;
+        runScheduledRequests();
+      });
+  }
+}
+
+function takeNextScheduledTask() {
+  if (
+    translationScheduler.queues.visible.length &&
+    translationScheduler.activeVisible < RESERVED_VISIBLE_REQUESTS
+  ) {
+    return translationScheduler.queues.visible.shift();
   }
 
-  const results = new Array(chunks.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < chunks.length) {
-      const index = nextIndex++;
-      const chunk = chunks[index];
-      const translated = await requestDeepSeek(chunk, targetLang, config);
-      results[index] = { chunk, translated };
-    }
+  if (
+    translationScheduler.queues.normal.length &&
+    translationScheduler.activeNormal < MAX_NORMAL_PARALLEL_REQUESTS
+  ) {
+    return translationScheduler.queues.normal.shift();
   }
 
-  const workerCount = Math.min(
-    MAX_PARALLEL_REQUESTS,
-    chunks.length,
-    Math.max(1, Math.floor(items.length / MAX_ITEMS_PER_REQUEST))
-  );
-  await Promise.all(Array.from({ length: workerCount }, worker));
-  return results.filter(Boolean);
+  if (translationScheduler.queues.visible.length) {
+    return translationScheduler.queues.visible.shift();
+  }
+
+  return null;
+}
+
+function normalizePriority(priority) {
+  return priority === "visible" ? "visible" : "normal";
 }
 
 async function requestDeepSeek(items, targetLang, config) {
