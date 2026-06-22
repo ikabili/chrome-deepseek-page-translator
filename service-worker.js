@@ -8,13 +8,13 @@ const DEFAULT_CONFIG = {
 const DB_NAME = "deepseek-page-translator";
 const DB_VERSION = 1;
 const TRANSLATIONS_STORE = "translations";
-const MAX_PARALLEL_REQUESTS = 5;
-const RESERVED_VISIBLE_REQUESTS = 1;
+const MAX_PARALLEL_REQUESTS = 50;
+const RESERVED_VISIBLE_REQUESTS = 20;
 const MAX_NORMAL_PARALLEL_REQUESTS = MAX_PARALLEL_REQUESTS - RESERVED_VISIBLE_REQUESTS;
 const CACHE_TTL_DAYS = 90;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const PAGE_TRANSLATED_PREFIX = "pageTranslated:";
+const PAGE_STATE_PREFIX = "pageState:";
 const LOCAL_PATTERN_KEY_PREFIX = "local-pattern";
 const NUMBER_TOKEN_RE = /[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
 const NUMBER_PLACEHOLDER_RE = /\{\{n(\d+)\}\}/g;
@@ -84,11 +84,10 @@ async function handleMessage(message, sender) {
     return { ok: true };
   }
 
-  if (message?.type === "translator:set-page-translated") {
+  if (message?.type === "translator:set-page-state") {
     const tabId = sender?.tab?.id || message.tabId;
     const url = message.url || sender?.url || sender?.tab?.url;
-    await setPageTranslated(tabId, url, Boolean(message.translated));
-    await updateActionIconForTab(tabId, undefined, url);
+    await setPageState(tabId, url, message.state);
     return { ok: true };
   }
 
@@ -101,12 +100,14 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.status === "loading") {
-    clearPageTranslated(tabId);
-  }
-  if (changeInfo.status === "loading" || changeInfo.url || tab.url) {
-    updateActionIconForTab(tabId, tab);
-  }
+  (async () => {
+    if (changeInfo.url || changeInfo.status === "loading") {
+      await clearPageState(tabId);
+    }
+    if (changeInfo.status === "loading" || changeInfo.url || tab.url) {
+      await updateActionIconForTab(tabId, tab);
+    }
+  })();
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -131,7 +132,7 @@ async function stopTabsForDisabledHosts(oldConfig = {}, newConfig = {}) {
     const host = getHostFromUrl(tab?.url);
     if (!host || !disabledHostSet.has(host)) return;
 
-    await clearPageTranslated(tab.id);
+    await clearPageState(tab.id);
     await sendMessageToTab(tab.id, { type: "translator:stop" });
     await updateActionIconForTab(tab.id, tab);
   }));
@@ -159,7 +160,7 @@ async function translateActivatedTab(tabId) {
   if (!host || !canRunOnUrl(tab?.url)) return;
 
   const config = await getConfig();
-  const shouldTranslate = Boolean(config.sites?.[host]?.enabled) || await isPageTranslated(tabId, tab.url);
+  const shouldTranslate = Boolean(config.sites?.[host]?.enabled) || await isPageActive(tabId, tab.url);
   if (!shouldTranslate) return;
 
   await sendMessageToTab(tabId, { type: "translator:activated-tab", forceStart: true });
@@ -198,45 +199,63 @@ async function updateActionIconForTab(tabId, knownTab, knownUrl) {
   const host = getHostFromUrl(url);
   const config = await getConfig();
   const siteEnabled = Boolean(host && config.sites?.[host]?.enabled);
-  const pageTranslated = await isPageTranslated(tabId, url);
-  const enabled = siteEnabled || pageTranslated;
+  const pageActive = await isPageActive(tabId, url);
+  const enabled = pageActive || siteEnabled;
   await chrome.action.setIcon({
     tabId,
     path: enabled ? ACTION_ICONS.enabled : ACTION_ICONS.disabled
   });
 }
 
-async function setPageTranslated(tabId, url, translated) {
+async function setPageState(tabId, url, state) {
   if (!tabId) return;
 
-  const key = pageTranslatedKey(tabId);
-  if (!translated) {
+  const tab = await getTabForStateUpdate(tabId);
+  if (!tab || !isSamePageStateUrl(tab.url, url)) return;
+
+  const key = pageStateKey(tabId);
+  if (state !== "active") {
     await getSessionStorage().remove(key);
+    await updateActionIconForTab(tabId, tab);
     return;
   }
 
   await getSessionStorage().set({
     [key]: {
       url: normalizeUrlForPageState(url),
-      translatedAt: Date.now()
+      state: "active",
+      updatedAt: Date.now()
     }
   });
+  await updateActionIconForTab(tabId, tab);
 }
 
-async function clearPageTranslated(tabId) {
+async function clearPageState(tabId) {
   if (!tabId) return;
-  await getSessionStorage().remove(pageTranslatedKey(tabId));
+  await getSessionStorage().remove(pageStateKey(tabId));
 }
 
-async function isPageTranslated(tabId, url) {
+async function isPageActive(tabId, url) {
   if (!tabId || !url) return false;
-  const key = pageTranslatedKey(tabId);
+  const key = pageStateKey(tabId);
   const data = await getSessionStorage().get(key);
-  return data[key]?.url === normalizeUrlForPageState(url);
+  return data[key]?.state === "active" && data[key]?.url === normalizeUrlForPageState(url);
 }
 
-function pageTranslatedKey(tabId) {
-  return `${PAGE_TRANSLATED_PREFIX}${tabId}`;
+function pageStateKey(tabId) {
+  return `${PAGE_STATE_PREFIX}${tabId}`;
+}
+
+async function getTabForStateUpdate(tabId) {
+  try {
+    return await chrome.tabs.get(tabId);
+  } catch {
+    return null;
+  }
+}
+
+function isSamePageStateUrl(currentUrl, messageUrl) {
+  return normalizeUrlForPageState(currentUrl) === normalizeUrlForPageState(messageUrl);
 }
 
 function getSessionStorage() {

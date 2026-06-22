@@ -25,7 +25,7 @@
   const SCROLL_FLUSH_DELAY_MS = 120;
   const MAX_NODES_PER_FLUSH = 80;
   const MAX_VISIBLE_NODES_PER_FLUSH = 40;
-  const MAX_ITEMS_PER_TRANSLATE_REQUEST = 20;
+  const MAX_ITEMS_PER_TRANSLATE_REQUEST = 10;
 
   const BLOCKED_TAGS = new Set([
     "SCRIPT",
@@ -53,7 +53,7 @@
 
     if (message?.type === "translator:stop") {
       stopTranslator(false);
-      markPageTranslated(false);
+      markPageState("original");
       sendResponse({ ok: true });
     }
 
@@ -87,6 +87,7 @@
     }
 
     state.enabled = true;
+    markPageState("active");
     state.targetLang = siteConfig.targetLang || state.targetLang;
     installObserver();
     installUrlWatcher();
@@ -96,7 +97,6 @@
     if (forceScan || state.pendingNodes.size === 0) {
       scanCurrentDocument();
     }
-    updateActionIcon();
     scheduleFlush(INITIAL_FLUSH_DELAY_MS);
     return { ok: true };
   }
@@ -163,9 +163,11 @@
     window.__deepseekTranslatorUrlWatcher = window.setInterval(() => {
       if (!state.enabled || state.lastHref === location.href) return;
       state.lastHref = location.href;
-      markPageTranslated(false);
+      markPageState("original");
       window.setTimeout(() => {
+        if (!state.enabled) return;
         scanCurrentDocument();
+        markPageState("active");
         scheduleFlush(URL_CHANGE_FLUSH_DELAY_MS);
       }, 350);
     }, 800);
@@ -428,14 +430,14 @@
     }
 
     if (appliedCount > 0) {
-      markPageTranslated(true);
+      markPageState("active");
     }
   }
 
   function restorePage() {
     const root = document.body || document.documentElement;
     if (!root) {
-      markPageTranslated(false);
+      markPageState("original");
       return;
     }
 
@@ -456,20 +458,13 @@
       removeLoadingIndicator(textNode);
     }
 
-    markPageTranslated(false);
+    markPageState("original");
   }
 
-  function markPageTranslated(translated) {
+  function markPageState(pageState) {
     chrome.runtime.sendMessage({
-      type: "translator:set-page-translated",
-      translated,
-      url: location.href
-    }).catch(() => {});
-  }
-
-  function updateActionIcon() {
-    chrome.runtime.sendMessage({
-      type: "translator:update-action-icon",
+      type: "translator:set-page-state",
+      state: pageState,
       url: location.href
     }).catch(() => {});
   }
