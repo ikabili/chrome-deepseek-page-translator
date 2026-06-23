@@ -141,6 +141,17 @@
   "statusSettingsSaved": {
     "message": "Settings saved"
   },
+  "statusTestingApiKey": {
+    "message": "Testing API Key"
+  },
+  "statusConfigFailed": {
+    "message": "App configuration failed: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
   "statusDomainEnabled": {
     "message": "Enabled for current domain"
   },

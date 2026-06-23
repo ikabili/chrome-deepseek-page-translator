@@ -54,9 +54,7 @@ async function init() {
 
 function bindEvents() {
   els.saveButton.addEventListener("click", async () => {
-    await saveFromForm();
-    await refreshPageStatus();
-    setStatus(t("statusSettingsSaved"));
+    await saveSettingsWithApiKeyTest();
   });
 
   els.enabledInput.addEventListener("change", async () => {
@@ -281,7 +279,7 @@ async function saveFromForm({ render = true } = {}) {
     apiKey: els.apiKeyInput.value.trim(),
     targetLang: els.targetLangInput.value,
     model: els.modelInput.value,
-    sites: nextSites
+    sites: normalizeSites(nextSites)
   };
 
   await chrome.storage.local.set({ translatorConfig: config });
@@ -289,7 +287,39 @@ async function saveFromForm({ render = true } = {}) {
   await updateActionIcon();
 }
 
+async function saveSettingsWithApiKeyTest() {
+  const apiKey = els.apiKeyInput.value.trim();
+  els.saveButton.disabled = true;
+
+  try {
+    if (apiKey) {
+      setStatus(t("statusTestingApiKey"), 0);
+      const response = await chrome.runtime.sendMessage({
+        type: "translator:test-api-key",
+        apiKey,
+        model: els.modelInput.value
+      });
+
+      if (!response?.ok) {
+        els.settingsPanel.open = true;
+        setStatus(t("statusConfigFailed", response.error || t("errorTranslationFailed")), 5600);
+        return;
+      }
+    }
+
+    await saveFromForm();
+    await refreshPageStatus();
+    setStatus(t("statusSettingsSaved"));
+  } catch (error) {
+    els.settingsPanel.open = true;
+    setStatus(t("statusConfigFailed", error.message || String(error)), 5600);
+  } finally {
+    els.saveButton.disabled = false;
+  }
+}
+
 async function disableSite(host) {
+  host = normalizeHost(host);
   const nextSites = { ...(config.sites || {}) };
   if (nextSites[host]) {
     nextSites[host] = {
@@ -310,11 +340,15 @@ async function disableSite(host) {
 }
 
 async function deleteSite(host) {
+  host = normalizeHost(host);
   const nextSites = { ...(config.sites || {}) };
   delete nextSites[host];
   config = { ...config, sites: nextSites };
   await chrome.storage.local.set({ translatorConfig: config });
-  await chrome.runtime.sendMessage({ type: "translator:clear-cache", host });
+  await chrome.runtime.sendMessage({
+    type: "translator:clear-cache",
+    host: Object.keys(nextSites).length ? host : ""
+  });
   if (host === activeHost) {
     els.enabledInput.checked = false;
     await sendToActiveTab({ type: "translator:stop" });
@@ -353,11 +387,17 @@ async function getPageStatus() {
 
 async function loadConfig() {
   const data = await chrome.storage.local.get("translatorConfig");
-  return {
+  const nextConfig = {
     ...DEFAULT_CONFIG,
     ...(data.translatorConfig || {}),
-    sites: data.translatorConfig?.sites || {}
+    sites: normalizeSites(data.translatorConfig?.sites || {})
   };
+
+  if (!sitesEqual(data.translatorConfig?.sites || {}, nextConfig.sites)) {
+    await chrome.storage.local.set({ translatorConfig: nextConfig });
+  }
+
+  return nextConfig;
 }
 
 async function getActiveTab() {
@@ -368,7 +408,7 @@ async function getActiveTab() {
 function getHost(url) {
   try {
     const parsed = new URL(url);
-    return parsed.hostname;
+    return normalizeHost(parsed.hostname);
   } catch {
     return "";
   }
@@ -377,7 +417,8 @@ function getHost(url) {
 function getDisplayLocation(url) {
   try {
     const parsed = new URL(url || "");
-    if (parsed.hostname) return parsed.hostname;
+    const host = normalizeHost(parsed.hostname);
+    if (host) return host;
     if (parsed.protocol === "file:") return t("filePageLabel");
   } catch {
     // Fall through to the unavailable label.
@@ -392,6 +433,33 @@ function canRunOnUrl(url) {
   } catch {
     return false;
   }
+}
+
+function normalizeHost(host) {
+  return String(host || "").trim().toLowerCase().replace(/^www\./, "");
+}
+
+function normalizeSites(sites = {}) {
+  const normalizedSites = {};
+  const entries = Object.entries(sites || {});
+
+  for (const [host, site] of entries) {
+    const normalizedHost = normalizeHost(host);
+    if (!normalizedHost || host.toLowerCase() !== normalizedHost) continue;
+    normalizedSites[normalizedHost] = site;
+  }
+
+  for (const [host, site] of entries) {
+    const normalizedHost = normalizeHost(host);
+    if (!normalizedHost || normalizedSites[normalizedHost]) continue;
+    normalizedSites[normalizedHost] = site;
+  }
+
+  return normalizedSites;
+}
+
+function sitesEqual(left = {}, right = {}) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {});
 }
 
 async function sendToActiveTab(message) {
@@ -422,9 +490,10 @@ async function updateActionIcon() {
   });
 }
 
-function setStatus(text) {
+function setStatus(text, timeoutMs = 2800) {
   els.statusText.textContent = text;
   els.statusText.classList.toggle("visible", Boolean(text));
+  if (!timeoutMs) return;
   window.setTimeout(() => {
     if (els.statusText.textContent === text) {
       els.statusText.textContent = "";

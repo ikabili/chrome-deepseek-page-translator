@@ -28,6 +28,7 @@
   const MAX_NODES_PER_FLUSH = 80;
   const MAX_VISIBLE_NODES_PER_FLUSH = 40;
   const MAX_ITEMS_PER_TRANSLATE_REQUEST = 10;
+  const VISIBILITY_ATTRIBUTE_FILTER = ["class", "style", "hidden", "aria-hidden", "open"];
 
   const BLOCKED_TAGS = new Set([
     "SCRIPT",
@@ -94,6 +95,7 @@
     installUrlWatcher();
     installReadyStateRescans();
     installViewportWatcher();
+    installInteractionWatcher();
 
     if (forceScan || state.pendingNodes.size === 0) {
       scanCurrentDocument();
@@ -149,6 +151,10 @@
         if (mutation.type === "characterData") {
           queueTextNode(mutation.target);
         }
+
+        if (mutation.type === "attributes") {
+          scanAndQueue(mutation.target);
+        }
       }
 
       scheduleFlush(MUTATION_FLUSH_DELAY_MS);
@@ -157,7 +163,9 @@
     state.observer.observe(document.documentElement || document, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: VISIBILITY_ATTRIBUTE_FILTER
     });
   }
 
@@ -206,13 +214,25 @@
     if (window.__deepseekTranslatorViewportWatcher) return;
     const onViewportChange = () => {
       if (!state.enabled) return;
-      if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
-      state.visibleFlushTimer = window.setTimeout(flushVisibleQueue, SCROLL_FLUSH_DELAY_MS);
+      scheduleVisibleFlush(SCROLL_FLUSH_DELAY_MS);
     };
 
     window.__deepseekTranslatorViewportWatcher = onViewportChange;
     window.addEventListener("scroll", onViewportChange, { passive: true });
     window.addEventListener("resize", onViewportChange, { passive: true });
+  }
+
+  function installInteractionWatcher() {
+    if (window.__deepseekTranslatorInteractionWatcher) return;
+    const onInteraction = () => {
+      if (!state.enabled || !state.pendingNodes.size) return;
+      scheduleVisibleFlush(SCROLL_FLUSH_DELAY_MS);
+    };
+
+    window.__deepseekTranslatorInteractionWatcher = onInteraction;
+    window.addEventListener("pointerover", onInteraction, { passive: true, capture: true });
+    window.addEventListener("focusin", onInteraction, { passive: true, capture: true });
+    window.addEventListener("click", onInteraction, { passive: true, capture: true });
   }
 
   function installReadyStateRescans() {
@@ -286,20 +306,30 @@
     state.flushTimer = window.setTimeout(flushQueue, delay);
   }
 
+  function scheduleVisibleFlush(delay) {
+    if (!state.enabled) return;
+    if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
+    state.visibleFlushTimer = window.setTimeout(flushVisibleQueue, delay);
+  }
+
   async function flushQueue() {
     state.flushTimer = 0;
     if (!state.enabled || state.inFlight || state.pendingNodes.size === 0) return;
     const routeVersion = state.routeVersion;
     state.inFlight = true;
+    let didSelectNodes = false;
 
     try {
-      await flushNodes(takeNextPendingNodes(MAX_NODES_PER_FLUSH, false), "normal", routeVersion);
+      const nodes = takeNextPendingNodes(MAX_NODES_PER_FLUSH, false);
+      if (!nodes.length) return;
+      didSelectNodes = true;
+      await flushNodes(nodes, "normal", routeVersion);
     } catch (error) {
       showTranslatorNotice(error.message || String(error));
     } finally {
       if (isCurrentRoute(routeVersion)) {
         state.inFlight = false;
-        if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+        if (didSelectNodes && state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
       }
     }
   }
@@ -310,15 +340,19 @@
 
     const routeVersion = state.routeVersion;
     state.visibleInFlight = true;
+    let didSelectNodes = false;
 
     try {
-      await flushNodes(takeNextPendingNodes(MAX_VISIBLE_NODES_PER_FLUSH, true), "visible", routeVersion);
+      const nodes = takeNextPendingNodes(MAX_VISIBLE_NODES_PER_FLUSH, true);
+      if (!nodes.length) return;
+      didSelectNodes = true;
+      await flushNodes(nodes, "visible", routeVersion);
     } catch (error) {
       showTranslatorNotice(error.message || String(error));
     } finally {
       if (isCurrentRoute(routeVersion)) {
         state.visibleInFlight = false;
-        if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+        if (didSelectNodes && state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
       }
     }
   }
@@ -395,6 +429,11 @@
     const candidates = [];
 
     for (const node of state.pendingNodes) {
+      if (!node.isConnected) {
+        state.pendingNodes.delete(node);
+        continue;
+      }
+
       if (!shouldTranslateTextNode(node)) {
         state.pendingNodes.delete(node);
         continue;
@@ -410,7 +449,6 @@
 
       const priority = getNodePriority(node);
       if (priority === Number.POSITIVE_INFINITY) {
-        state.pendingNodes.delete(node);
         continue;
       }
 

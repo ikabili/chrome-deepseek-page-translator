@@ -76,6 +76,10 @@ async function handleMessage(message, sender) {
     });
   }
 
+  if (message?.type === "translator:test-api-key") {
+    return testDeepSeekApiKey(message.apiKey, message.model);
+  }
+
   if (message?.type === "translator:get-cached") {
     return getCachedBatch(message.items || [], message.targetLang, sender);
   }
@@ -85,7 +89,10 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "translator:clear-cache") {
-    await clearCache(message.host || getSenderHost(sender));
+    const host = Object.prototype.hasOwnProperty.call(message, "host")
+      ? message.host
+      : getSenderHost(sender);
+    await clearCache(host);
     return { ok: true };
   }
 
@@ -143,6 +150,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes.translatorConfig) {
     stopTabsForDisabledHosts(changes.translatorConfig.oldValue, changes.translatorConfig.newValue);
+    clearCacheForDeletedSites(changes.translatorConfig.oldValue, changes.translatorConfig.newValue)
+      .catch((error) => console.warn("Failed to clear cache for deleted sites", error));
     updateActionIconsForOpenTabs();
   }
 });
@@ -170,11 +179,23 @@ async function stopTabsForDisabledHosts(oldConfig = {}, newConfig = {}) {
 }
 
 function getDisabledHosts(oldConfig = {}, newConfig = {}) {
-  const oldSites = oldConfig?.sites || {};
-  const newSites = newConfig?.sites || {};
+  const oldSites = normalizeSites(oldConfig?.sites || {});
+  const newSites = normalizeSites(newConfig?.sites || {});
   return Object.entries(oldSites)
     .filter(([host, site]) => site?.enabled && !newSites?.[host]?.enabled)
     .map(([host]) => host);
+}
+
+async function clearCacheForDeletedSites(oldConfig = {}, newConfig = {}) {
+  const deletedHosts = getDeletedHosts(oldConfig, newConfig);
+  if (!deletedHosts.length) return;
+  await Promise.all(deletedHosts.map((host) => clearCache(host)));
+}
+
+function getDeletedHosts(oldConfig = {}, newConfig = {}) {
+  const oldSites = normalizeSites(oldConfig?.sites || {});
+  const newSites = normalizeSites(newConfig?.sites || {});
+  return Object.keys(oldSites).filter((host) => !newSites[host]);
 }
 
 async function translateActivatedTab(tabId) {
@@ -510,6 +531,41 @@ function normalizePriority(priority) {
   return priority === "visible" ? "visible" : "normal";
 }
 
+async function testDeepSeekApiKey(apiKey, model) {
+  const key = String(apiKey || "").trim();
+  if (!key) {
+    throw new Error(t("errorMissingApiKey"));
+  }
+
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: model || DEFAULT_CONFIG.model,
+      temperature: 0,
+      max_tokens: 1,
+      thinking: { type: "disabled" },
+      messages: [
+        {
+          role: "user",
+          content: "Reply with OK."
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(t("errorDeepSeekRequestFailed", [String(response.status), detail.slice(0, 200)]));
+  }
+
+  await response.json();
+  return { ok: true };
+}
+
 async function requestDeepSeek(items, targetLang, config, signal) {
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
@@ -581,7 +637,7 @@ async function getConfig() {
   return {
     ...DEFAULT_CONFIG,
     ...(data.translatorConfig || {}),
-    sites: data.translatorConfig?.sites || {}
+    sites: normalizeSites(data.translatorConfig?.sites || {})
   };
 }
 
@@ -675,6 +731,7 @@ async function setCachedTranslations(records) {
 }
 
 async function clearCache(host) {
+  host = normalizeHost(host);
   const db = await openTranslationsDb();
   const transaction = db.transaction(TRANSLATIONS_STORE, "readwrite");
   const store = transaction.objectStore(TRANSLATIONS_STORE);
@@ -686,9 +743,16 @@ async function clearCache(host) {
   }
 
   const index = store.index("host");
-  const request = index.openKeyCursor(IDBKeyRange.only(host));
+  for (const cacheHost of cacheHostsForHost(host)) {
+    await deleteCacheByHost(store, index, cacheHost);
+  }
 
-  await new Promise((resolve, reject) => {
+  await waitForTransaction(transaction);
+}
+
+function deleteCacheByHost(store, index, host) {
+  return new Promise((resolve, reject) => {
+    const request = index.openKeyCursor(IDBKeyRange.only(host));
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) {
@@ -700,8 +764,6 @@ async function clearCache(host) {
     };
     request.onerror = () => reject(request.error);
   });
-
-  await waitForTransaction(transaction);
 }
 
 async function cleanupExpiredTranslationsIfNeeded() {
@@ -790,7 +852,7 @@ async function sha256(text) {
 
 function getSenderHost(sender) {
   try {
-    return new URL(sender?.tab?.url || sender?.url || "").hostname;
+    return normalizeHost(new URL(sender?.tab?.url || sender?.url || "").hostname);
   } catch {
     return "";
   }
@@ -798,10 +860,41 @@ function getSenderHost(sender) {
 
 function getHostFromUrl(url) {
   try {
-    return new URL(url || "").hostname;
+    return normalizeHost(new URL(url || "").hostname);
   } catch {
     return "";
   }
+}
+
+function normalizeHost(host) {
+  return String(host || "").trim().toLowerCase().replace(/^www\./, "");
+}
+
+function cacheHostsForHost(host) {
+  const normalizedHost = normalizeHost(host);
+  if (!normalizedHost) return [];
+  return normalizedHost.startsWith("www.")
+    ? [normalizedHost]
+    : [normalizedHost, `www.${normalizedHost}`];
+}
+
+function normalizeSites(sites = {}) {
+  const normalizedSites = {};
+  const entries = Object.entries(sites || {});
+
+  for (const [host, site] of entries) {
+    const normalizedHost = normalizeHost(host);
+    if (!normalizedHost || host.toLowerCase() !== normalizedHost) continue;
+    normalizedSites[normalizedHost] = site;
+  }
+
+  for (const [host, site] of entries) {
+    const normalizedHost = normalizeHost(host);
+    if (!normalizedHost || normalizedSites[normalizedHost]) continue;
+    normalizedSites[normalizedHost] = site;
+  }
+
+  return normalizedSites;
 }
 
 function canRunOnUrl(url) {

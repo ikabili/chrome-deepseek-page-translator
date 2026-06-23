@@ -138,6 +138,17 @@
   "statusSettingsSaved": {
     "message": "设置已保存"
   },
+  "statusTestingApiKey": {
+    "message": "正在测试 API Key"
+  },
+  "statusConfigFailed": {
+    "message": "应用配置失败：$ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
   "statusDomainEnabled": {
     "message": "已为当前域名开启"
   },
