@@ -52,15 +52,10 @@ body {
 }
 
 .brand-mark {
-  display: inline-grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 17px;
-  font-weight: 800;
+  display: block;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
 }
 
 h1 {

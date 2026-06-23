@@ -16,6 +16,7 @@
     inFlight: false,
     visibleInFlight: false,
     lastHref: location.href,
+    routeCheckInFlight: false,
     readyRescansInstalled: false,
     routeVersion: 0
   };
@@ -73,7 +74,7 @@
   bootstrap();
 
   async function bootstrap() {
-    const siteConfig = await chrome.runtime.sendMessage({ type: "translator:get-site-config" });
+    const siteConfig = await getSiteConfigForUrl(location.href);
     if (siteConfig?.enabled) {
       state.targetLang = siteConfig.targetLang || state.targetLang;
       await startTranslator(false);
@@ -81,7 +82,7 @@
   }
 
   async function startTranslator(forceScan) {
-    const siteConfig = await chrome.runtime.sendMessage({ type: "translator:get-site-config" });
+    const siteConfig = await getSiteConfigForUrl(location.href);
     if (!siteConfig?.hasApiKey) {
       return { ok: false, error: t("errorMissingApiKey") };
     }
@@ -102,17 +103,20 @@
   }
 
   async function resumeTranslatorForActiveTab(forceStart) {
-    const siteConfig = await chrome.runtime.sendMessage({ type: "translator:get-site-config" });
-    if (forceStart || siteConfig?.enabled) {
+    const siteConfig = await getSiteConfigForUrl(location.href);
+    if (siteConfig?.enabled) {
       return startTranslator(true);
     }
 
-    if (!siteConfig?.enabled) {
-      if (!state.enabled) return { ok: true };
-      scanCurrentDocument();
-      scheduleFlush(INITIAL_FLUSH_DELAY_MS);
-      return { ok: true };
-    }
+    if (forceStart && state.enabled) stopTranslator(false);
+    return { ok: true };
+  }
+
+  function getSiteConfigForUrl(url) {
+    return chrome.runtime.sendMessage({
+      type: "translator:get-site-config",
+      url
+    });
   }
 
   function stopTranslator(restoreOriginal) {
@@ -159,18 +163,42 @@
 
   function installUrlWatcher() {
     if (window.__deepseekTranslatorUrlWatcher) return;
-    window.__deepseekTranslatorUrlWatcher = window.setInterval(() => {
-      if (!state.enabled || state.lastHref === location.href) return;
-      const previousHref = state.lastHref;
-      state.lastHref = location.href;
-      markPageOriginal({ restore: true, url: previousHref });
-      resetRouteTranslationState();
-      window.setTimeout(() => {
-        if (!state.enabled) return;
-        scanCurrentDocument();
-        markPageState("active", location.href);
-        scheduleFlush(URL_CHANGE_FLUSH_DELAY_MS);
-      }, 350);
+    window.__deepseekTranslatorUrlWatcher = window.setInterval(async () => {
+      if (state.routeCheckInFlight || state.lastHref === location.href) return;
+      state.routeCheckInFlight = true;
+      const nextHref = location.href;
+
+      try {
+        const siteConfig = await getSiteConfigForUrl(nextHref);
+        if (nextHref !== location.href) return;
+
+        state.lastHref = nextHref;
+        clearRouteTranslationWork();
+
+        if (!siteConfig?.enabled) {
+          state.enabled = false;
+          markPageOriginal({ restore: false, url: nextHref });
+          if (state.observer) {
+            state.observer.disconnect();
+            state.observer = null;
+          }
+          return;
+        }
+
+        state.enabled = true;
+        state.targetLang = siteConfig.targetLang || state.targetLang;
+        installObserver();
+        window.setTimeout(() => {
+          if (!state.enabled || state.lastHref !== location.href) return;
+          scanCurrentDocument();
+          markPageState("active", location.href);
+          scheduleFlush(URL_CHANGE_FLUSH_DELAY_MS);
+        }, 350);
+      } catch (error) {
+        showTranslatorNotice(error.message || String(error));
+      } finally {
+        state.routeCheckInFlight = false;
+      }
     }, 800);
   }
 
@@ -470,13 +498,12 @@
     markPageState("original", url);
   }
 
-  function resetRouteTranslationState() {
+  function clearRouteTranslationWork() {
     state.routeVersion += 1;
     state.pendingNodes.clear();
     state.activeNodeIds.clear();
     clearLoadingIndicators();
     clearRouteTimers();
-    state.nodeMap = new WeakMap();
     state.inFlight = false;
     state.visibleInFlight = false;
   }

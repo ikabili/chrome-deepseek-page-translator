@@ -20,16 +20,16 @@ const NUMBER_TOKEN_RE = /[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d
 const NUMBER_PLACEHOLDER_RE = /\{\{n(\d+)\}\}/g;
 const ACTION_ICONS = {
   enabled: {
-    16: "icons/deepseek-blue-16.png",
-    32: "icons/deepseek-blue-32.png",
-    48: "icons/deepseek-blue-48.png",
-    128: "icons/deepseek-blue-128.png"
+    16: "icons/translator-active-16.png",
+    32: "icons/translator-active-32.png",
+    48: "icons/translator-active-48.png",
+    128: "icons/translator-active-128.png"
   },
   disabled: {
-    16: "icons/deepseek-gray-16.png",
-    32: "icons/deepseek-gray-32.png",
-    48: "icons/deepseek-gray-48.png",
-    128: "icons/deepseek-gray-128.png"
+    16: "icons/translator-inactive-16.png",
+    32: "icons/translator-inactive-32.png",
+    48: "icons/translator-inactive-48.png",
+    128: "icons/translator-inactive-128.png"
   }
 };
 
@@ -54,9 +54,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(message, sender) {
   if (message?.type === "translator:get-site-config") {
     const config = await getConfig();
-    const host = getSenderHost(sender);
+    const url = message.url || sender?.url || sender?.tab?.url;
+    const host = getHostFromUrl(url) || getSenderHost(sender);
     const tabId = sender?.tab?.id;
-    const url = sender?.url || sender?.tab?.url;
     if (Number.isInteger(tabId) && config.sites?.[host]?.enabled) {
       await refreshActionIconBestEffort(tabId, sender?.tab, url);
     }
@@ -191,7 +191,7 @@ async function translateActivatedTab(tabId) {
   if (!host || !canRunOnUrl(tab?.url)) return;
 
   const config = await getConfig();
-  const shouldTranslate = Boolean(config.sites?.[host]?.enabled) || await isPageActive(tabId, tab.url);
+  const shouldTranslate = Boolean(config.sites?.[host]?.enabled);
   if (!shouldTranslate) return;
 
   await sendMessageToTab(tabId, { type: "translator:activated-tab", forceStart: true });

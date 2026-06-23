@@ -16,17 +16,17 @@
     "default_title": "__MSG_extensionActionTitle__",
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icons/deepseek-gray-16.png",
-      "32": "icons/deepseek-gray-32.png",
-      "48": "icons/deepseek-gray-48.png",
-      "128": "icons/deepseek-gray-128.png"
+      "16": "icons/translator-inactive-16.png",
+      "32": "icons/translator-inactive-32.png",
+      "48": "icons/translator-inactive-48.png",
+      "128": "icons/translator-inactive-128.png"
     }
   },
   "icons": {
-    "16": "icons/deepseek-16.png",
-    "32": "icons/deepseek-32.png",
-    "48": "icons/deepseek-48.png",
-    "128": "icons/deepseek-128.png"
+    "16": "icons/translator-16.png",
+    "32": "icons/translator-32.png",
+    "48": "icons/translator-48.png",
+    "128": "icons/translator-128.png"
   },
   "background": {
     "service_worker": "service-worker.js"
