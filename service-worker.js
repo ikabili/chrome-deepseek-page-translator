@@ -1,3 +1,7 @@
+importScripts("shared-utils.js");
+
+const { getI18nMessage, normalizeHost, normalizeSites } = globalThis.DeepSeekTranslatorUtils;
+
 const DEFAULT_CONFIG = {
   apiKey: "",
   targetLang: "zh-CN",
@@ -14,6 +18,7 @@ const MAX_NORMAL_PARALLEL_REQUESTS = MAX_PARALLEL_REQUESTS - RESERVED_VISIBLE_RE
 const CACHE_TTL_DAYS = 90;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const API_KEY_TEST_TIMEOUT_MS = 15000;
 const PAGE_STATE_PREFIX = "pageState:";
 const LOCAL_PATTERN_KEY_PREFIX = "local-pattern";
 const NUMBER_TOKEN_RE = /[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
@@ -226,7 +231,7 @@ async function sendMessageToTab(tabId, message) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content-script.js"]
+        files: ["shared-utils.js", "content-script.js"]
       });
       await chrome.tabs.sendMessage(tabId, message);
     } catch {
@@ -537,25 +542,39 @@ async function testDeepSeekApiKey(apiKey, model) {
     throw new Error(t("errorMissingApiKey"));
   }
 
-  const response = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: model || DEFAULT_CONFIG.model,
-      temperature: 0,
-      max_tokens: 1,
-      thinking: { type: "disabled" },
-      messages: [
-        {
-          role: "user",
-          content: "Reply with OK."
-        }
-      ]
-    })
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_KEY_TEST_TIMEOUT_MS);
+  let response;
+
+  try {
+    response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${key}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: model || DEFAULT_CONFIG.model,
+        temperature: 0,
+        max_tokens: 1,
+        thinking: { type: "disabled" },
+        messages: [
+          {
+            role: "user",
+            content: "Reply with OK."
+          }
+        ]
+      })
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(t("errorDeepSeekRequestTimedOut"));
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const detail = await response.text();
@@ -670,7 +689,7 @@ async function getPatternCachedTranslations(items) {
     (item) => item.localPattern?.key,
     (record, item) => {
       const translation = hydrateLocalPattern(record, item.localPattern.numbers);
-      if (!translation) return null;
+      if (translation == null) return null;
       return [item.key, {
         ...record,
         key: item.key,
@@ -684,10 +703,11 @@ async function getCachedTranslationRecords(items, keySelector, recordMapper) {
   if (!items.length) return new Map();
 
   const db = await openTranslationsDb();
-  const transaction = db.transaction(TRANSLATIONS_STORE, "readwrite");
+  const transaction = db.transaction(TRANSLATIONS_STORE, "readonly");
   const store = transaction.objectStore(TRANSLATIONS_STORE);
   const records = new Map();
   const now = Date.now();
+  const hitUpdates = [];
 
   await Promise.all(items.map((item) => new Promise((resolve, reject) => {
     const key = keySelector(item);
@@ -700,9 +720,7 @@ async function getCachedTranslationRecords(items, keySelector, recordMapper) {
       const record = request.result;
       const mapped = record ? recordMapper(record, item) : null;
       if (mapped) {
-        record.hitCount = (record.hitCount || 0) + 1;
-        record.updatedAt = now;
-        store.put(record);
+        hitUpdates.push({ key, updatedAt: now });
         records.set(mapped[0], mapped[1]);
       }
       resolve();
@@ -711,7 +729,36 @@ async function getCachedTranslationRecords(items, keySelector, recordMapper) {
   })));
 
   await waitForTransaction(transaction);
+  updateCachedTranslationHits(hitUpdates).catch(() => {});
   return records;
+}
+
+async function updateCachedTranslationHits(updates) {
+  if (!updates.length) return;
+
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(TRANSLATIONS_STORE, "readwrite");
+  const store = transaction.objectStore(TRANSLATIONS_STORE);
+
+  await Promise.all(updates.map((update) => new Promise((resolve, reject) => {
+    const request = store.get(update.key);
+    request.onsuccess = () => {
+      const record = request.result;
+      if (!record) {
+        resolve();
+        return;
+      }
+
+      record.hitCount = (record.hitCount || 0) + 1;
+      record.updatedAt = update.updatedAt;
+      const putRequest = store.put(record);
+      putRequest.onsuccess = () => resolve();
+      putRequest.onerror = () => reject(putRequest.error);
+    };
+    request.onerror = () => reject(request.error);
+  })));
+
+  await waitForTransaction(transaction);
 }
 
 async function setCachedTranslations(records) {
@@ -866,35 +913,10 @@ function getHostFromUrl(url) {
   }
 }
 
-function normalizeHost(host) {
-  return String(host || "").trim().toLowerCase().replace(/^www\./, "");
-}
-
 function cacheHostsForHost(host) {
   const normalizedHost = normalizeHost(host);
   if (!normalizedHost) return [];
-  return normalizedHost.startsWith("www.")
-    ? [normalizedHost]
-    : [normalizedHost, `www.${normalizedHost}`];
-}
-
-function normalizeSites(sites = {}) {
-  const normalizedSites = {};
-  const entries = Object.entries(sites || {});
-
-  for (const [host, site] of entries) {
-    const normalizedHost = normalizeHost(host);
-    if (!normalizedHost || host.toLowerCase() !== normalizedHost) continue;
-    normalizedSites[normalizedHost] = site;
-  }
-
-  for (const [host, site] of entries) {
-    const normalizedHost = normalizeHost(host);
-    if (!normalizedHost || normalizedSites[normalizedHost]) continue;
-    normalizedSites[normalizedHost] = site;
-  }
-
-  return normalizedSites;
+  return [normalizedHost, `www.${normalizedHost}`];
 }
 
 function canRunOnUrl(url) {
@@ -999,17 +1021,21 @@ function createTranslationPattern(translation, sourceNumbers) {
 }
 
 function hydrateLocalPattern(record, numbers) {
-  if (!record?.localPattern || !record.translationPattern || !Array.isArray(numbers)) return "";
+  if (!record?.localPattern || !record.translationPattern || !Array.isArray(numbers)) return null;
 
   const seen = new Set();
+  let isInvalid = false;
   const translation = record.translationPattern.replace(NUMBER_PLACEHOLDER_RE, (_match, indexText) => {
     const index = Number(indexText);
-    if (!Number.isInteger(index) || index < 0 || index >= numbers.length) return "";
+    if (!Number.isInteger(index) || index < 0 || index >= numbers.length) {
+      isInvalid = true;
+      return "";
+    }
     seen.add(index);
     return numbers[index];
   });
 
-  return seen.size === numbers.length ? translation : "";
+  return !isInvalid && seen.size === numbers.length ? translation : null;
 }
 
 function collectNumberMatches(text) {
@@ -1040,5 +1066,5 @@ function normalizeNumber(number) {
 }
 
 function t(key, substitutions) {
-  return chrome.i18n.getMessage(key, substitutions) || key;
+  return getI18nMessage(key, substitutions);
 }

@@ -195,6 +195,9 @@
   "errorTranslationFailed": {
     "message": "Translation request failed"
   },
+  "errorTranslationRequestTimedOut": {
+    "message": "Translation request timed out. The page will retry automatically."
+  },
   "errorTranslationCancelled": {
     "message": "Translation was cancelled because this site is disabled"
   },
@@ -208,6 +211,9 @@
         "content": "$2"
       }
     }
+  },
+  "errorDeepSeekRequestTimedOut": {
+    "message": "DeepSeek request timed out. Please check your network and try again."
   },
   "errorDeepSeekMalformedResponse": {
     "message": "DeepSeek returned an invalid translation response"

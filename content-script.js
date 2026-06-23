@@ -2,6 +2,8 @@
   if (window.__deepseekPageTranslatorLoaded) return;
   window.__deepseekPageTranslatorLoaded = true;
 
+  const { getI18nMessage } = globalThis.DeepSeekTranslatorUtils;
+
   const state = {
     enabled: false,
     targetLang: "zh-CN",
@@ -25,6 +27,8 @@
   const MUTATION_FLUSH_DELAY_MS = 350;
   const URL_CHANGE_FLUSH_DELAY_MS = 250;
   const SCROLL_FLUSH_DELAY_MS = 120;
+  const INTERACTION_FLUSH_THROTTLE_MS = 200;
+  const RUNTIME_MESSAGE_TIMEOUT_MS = 30000;
   const MAX_NODES_PER_FLUSH = 80;
   const MAX_VISIBLE_NODES_PER_FLUSH = 40;
   const MAX_ITEMS_PER_TRANSLATE_REQUEST = 10;
@@ -153,7 +157,7 @@
         }
 
         if (mutation.type === "attributes") {
-          scanAndQueue(mutation.target);
+          queueDirectTextChildren(mutation.target);
         }
       }
 
@@ -224,9 +228,13 @@
 
   function installInteractionWatcher() {
     if (window.__deepseekTranslatorInteractionWatcher) return;
+    let lastInteractionFlushAt = 0;
     const onInteraction = () => {
       if (!state.enabled || !state.pendingNodes.size) return;
-      scheduleVisibleFlush(SCROLL_FLUSH_DELAY_MS);
+      const now = Date.now();
+      if (now - lastInteractionFlushAt < INTERACTION_FLUSH_THROTTLE_MS) return;
+      lastInteractionFlushAt = now;
+      scheduleVisibleFlush(SCROLL_FLUSH_DELAY_MS, { reset: false });
     };
 
     window.__deepseekTranslatorInteractionWatcher = onInteraction;
@@ -280,6 +288,13 @@
     }
   }
 
+  function queueDirectTextChildren(root) {
+    if (!root || root.nodeType !== Node.ELEMENT_NODE || shouldSkipNode(root)) return;
+    for (const child of root.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) queueTextNode(child);
+    }
+  }
+
   function queueTextNode(node) {
     if (!shouldTranslateTextNode(node)) return;
     const text = normalizeText(node.nodeValue);
@@ -306,8 +321,9 @@
     state.flushTimer = window.setTimeout(flushQueue, delay);
   }
 
-  function scheduleVisibleFlush(delay) {
+  function scheduleVisibleFlush(delay, { reset = true } = {}) {
     if (!state.enabled) return;
+    if (!reset && state.visibleFlushTimer) return;
     if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
     state.visibleFlushTimer = window.setTimeout(flushVisibleQueue, delay);
   }
@@ -366,19 +382,18 @@
     try {
       if (!items.length) return;
 
-      const cachedResponse = await chrome.runtime.sendMessage({
+      const cachedResponse = await sendRuntimeMessage({
         type: "translator:get-cached",
         targetLang: state.targetLang,
         items
       });
 
       if (!isCurrentRoute(routeVersion)) return;
-      if (cachedResponse?.ok) {
-        if (!state.enabled) return;
-        applyTranslations(nodes, cachedResponse.items || []);
-      } else if (cachedResponse?.error) {
-        showTranslatorNotice(cachedResponse.error);
+      if (!cachedResponse?.ok) {
+        throw new Error(cachedResponse?.error || t("errorTranslationFailed"));
       }
+      if (!state.enabled) return;
+      applyTranslations(nodes, cachedResponse.items || []);
 
       const missingIds = new Set(cachedResponse?.missingIds || items.map((item) => item.id));
       const missingItems = items.filter((item) => missingIds.has(item.id));
@@ -391,7 +406,7 @@
 
         showLoadingForItems(nodes, missingItems);
         await Promise.all(chunkItems(missingItems, MAX_ITEMS_PER_TRANSLATE_REQUEST).map(async (chunk) => {
-          const response = await chrome.runtime.sendMessage({
+          const response = await sendRuntimeMessage({
             type: "translator:translate",
             targetLang: state.targetLang,
             priority,
@@ -399,21 +414,66 @@
           });
 
           if (!state.enabled || !isCurrentRoute(routeVersion)) return;
-          if (response?.ok) {
-            const chunkNodes = chunk
-              .map((item) => nodesById.get(String(item.id)))
-              .filter(Boolean);
-            applyTranslations(chunkNodes, response.items || []);
-            clearLoadingForNodes(chunkNodes);
+          if (!response?.ok) {
+            throw new Error(response?.error || t("errorTranslationFailed"));
           }
-          if (response?.ok === false) showTranslatorNotice(response.error || t("errorTranslationFailed"));
+
+          const chunkNodes = chunk
+            .map((item) => nodesById.get(String(item.id)))
+            .filter(Boolean);
+          applyTranslations(chunkNodes, response.items || []);
+          clearLoadingForNodes(chunkNodes);
         }));
       }
+    } catch (error) {
+      requeueNodes(nodes, routeVersion);
+      throw error;
     } finally {
       if (isCurrentRoute(routeVersion)) {
         clearLoadingForNodes(nodes);
         releaseActiveNodes(nodes);
       }
+    }
+  }
+
+  function sendRuntimeMessage(message, timeoutMs = RUNTIME_MESSAGE_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        settled = true;
+        reject(new Error(t("errorTranslationRequestTimedOut")));
+      }, timeoutMs);
+
+      try {
+        chrome.runtime.sendMessage(message, (response) => {
+          const lastError = chrome.runtime.lastError;
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+
+          if (lastError) {
+            reject(new Error(lastError.message || t("errorTranslationFailed")));
+            return;
+          }
+
+          resolve(response);
+        });
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        reject(error);
+      }
+    });
+  }
+
+  function requeueNodes(nodes, routeVersion) {
+    if (!state.enabled || !isCurrentRoute(routeVersion)) return;
+
+    for (const node of nodes) {
+      const record = state.nodeMap.get(node);
+      if (!record || record.translated || !node.isConnected || !shouldTranslateTextNode(node)) continue;
+      state.pendingNodes.add(node);
     }
   }
 
@@ -718,6 +778,6 @@
   }
 
   function t(key, substitutions) {
-    return chrome.i18n.getMessage(key, substitutions) || key;
+    return getI18nMessage(key, substitutions);
   }
 })();

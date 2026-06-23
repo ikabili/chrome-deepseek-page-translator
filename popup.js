@@ -1,3 +1,5 @@
+const { getI18nMessage, normalizeHost, normalizeSites } = globalThis.DeepSeekTranslatorUtils;
+
 const DEFAULT_CONFIG = {
   apiKey: "",
   targetLang: "zh-CN",
@@ -11,6 +13,8 @@ const DEFAULT_PAGE_STATUS = {
   canRun: false,
   enabled: false,
   pageState: "original",
+  targetLang: DEFAULT_CONFIG.targetLang,
+  model: DEFAULT_CONFIG.model,
   hasApiKey: false
 };
 
@@ -381,6 +385,9 @@ async function getPageStatus() {
     host: activeHost,
     canRun: canRunOnUrl(activeTab?.url),
     enabled: Boolean(config.sites?.[activeHost]?.enabled),
+    pageState: "original",
+    targetLang: config.sites?.[activeHost]?.targetLang || config.targetLang,
+    model: config.model || DEFAULT_CONFIG.model,
     hasApiKey: Boolean(config.apiKey)
   };
 }
@@ -435,29 +442,6 @@ function canRunOnUrl(url) {
   }
 }
 
-function normalizeHost(host) {
-  return String(host || "").trim().toLowerCase().replace(/^www\./, "");
-}
-
-function normalizeSites(sites = {}) {
-  const normalizedSites = {};
-  const entries = Object.entries(sites || {});
-
-  for (const [host, site] of entries) {
-    const normalizedHost = normalizeHost(host);
-    if (!normalizedHost || host.toLowerCase() !== normalizedHost) continue;
-    normalizedSites[normalizedHost] = site;
-  }
-
-  for (const [host, site] of entries) {
-    const normalizedHost = normalizeHost(host);
-    if (!normalizedHost || normalizedSites[normalizedHost]) continue;
-    normalizedSites[normalizedHost] = site;
-  }
-
-  return normalizedSites;
-}
-
 function sitesEqual(left = {}, right = {}) {
   return JSON.stringify(left || {}) === JSON.stringify(right || {});
 }
@@ -470,7 +454,7 @@ async function sendToActiveTab(message) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: activeTab.id },
-        files: ["content-script.js"]
+        files: ["shared-utils.js", "content-script.js"]
       });
       return await chrome.tabs.sendMessage(activeTab.id, message);
     } catch {
@@ -499,7 +483,7 @@ function setStatus(text, timeoutMs = 2800) {
       els.statusText.textContent = "";
       els.statusText.classList.remove("visible");
     }
-  }, 2800);
+  }, timeoutMs);
 }
 
 function displayLanguage(value) {
@@ -513,5 +497,5 @@ function displayModel(value) {
 }
 
 function t(key, substitutions) {
-  return chrome.i18n.getMessage(key, substitutions) || key;
+  return getI18nMessage(key, substitutions);
 }

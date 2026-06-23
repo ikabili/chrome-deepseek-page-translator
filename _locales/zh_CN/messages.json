@@ -192,6 +192,9 @@
   "errorTranslationFailed": {
     "message": "翻译请求失败"
   },
+  "errorTranslationRequestTimedOut": {
+    "message": "翻译请求超时，页面会自动重试"
+  },
   "errorTranslationCancelled": {
     "message": "由于该网站已禁用翻译，本次翻译已取消"
   },
@@ -205,6 +208,9 @@
         "content": "$2"
       }
     }
+  },
+  "errorDeepSeekRequestTimedOut": {
+    "message": "DeepSeek 请求超时，请检查网络后重试"
   },
   "errorDeepSeekMalformedResponse": {
     "message": "DeepSeek 返回了无效的翻译结果"
