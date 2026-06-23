@@ -37,6 +37,7 @@ const translationScheduler = {
   activeTotal: 0,
   activeNormal: 0,
   activeVisible: 0,
+  activeTasks: new Set(),
   queues: {
     visible: [],
     normal: []
@@ -54,6 +55,11 @@ async function handleMessage(message, sender) {
   if (message?.type === "translator:get-site-config") {
     const config = await getConfig();
     const host = getSenderHost(sender);
+    const tabId = sender?.tab?.id;
+    const url = sender?.url || sender?.tab?.url;
+    if (Number.isInteger(tabId) && config.sites?.[host]?.enabled) {
+      await refreshActionIconBestEffort(tabId, sender?.tab, url);
+    }
     return {
       ok: true,
       host,
@@ -80,12 +86,12 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "translator:update-action-icon") {
-    await updateActionIconForTab(sender?.tab?.id || message.tabId, undefined, message.url);
+    await updateActionIconForTab(sender?.tab?.id ?? message.tabId, undefined, message.url);
     return { ok: true };
   }
 
   if (message?.type === "translator:set-page-state") {
-    const tabId = sender?.tab?.id || message.tabId;
+    const tabId = sender?.tab?.id ?? message.tabId;
     const url = message.url || sender?.url || sender?.tab?.url;
     await setPageState(tabId, url, message.state);
     return { ok: true };
@@ -127,6 +133,7 @@ async function stopTabsForDisabledHosts(oldConfig = {}, newConfig = {}) {
   if (!disabledHosts.length) return;
 
   const disabledHostSet = new Set(disabledHosts);
+  cancelTranslationWorkForHosts(disabledHostSet);
   const tabs = await chrome.tabs.query({});
   await Promise.all(tabs.map(async (tab) => {
     const host = getHostFromUrl(tab?.url);
@@ -184,7 +191,7 @@ async function sendMessageToTab(tabId, message) {
 }
 
 async function updateActionIconForTab(tabId, knownTab, knownUrl) {
-  if (!tabId) return;
+  if (!Number.isInteger(tabId)) return;
 
   let tab = knownTab;
   if (!knownUrl && !tab?.url) {
@@ -207,16 +214,24 @@ async function updateActionIconForTab(tabId, knownTab, knownUrl) {
   });
 }
 
+async function refreshActionIconBestEffort(tabId, knownTab, knownUrl) {
+  try {
+    await updateActionIconForTab(tabId, knownTab, knownUrl);
+  } catch (error) {
+    console.warn("Failed to refresh translator action icon", error);
+  }
+}
+
 async function setPageState(tabId, url, state) {
-  if (!tabId) return;
+  if (!Number.isInteger(tabId)) return;
 
   const tab = await getTabForStateUpdate(tabId);
-  if (!tab || !isSamePageStateUrl(tab.url, url)) return;
+  if (!canUsePageStateUrl(tab?.url, url)) return;
 
   const key = pageStateKey(tabId);
   if (state !== "active") {
     await getSessionStorage().remove(key);
-    await updateActionIconForTab(tabId, tab);
+    await updateActionIconForTab(tabId, tab, url);
     return;
   }
 
@@ -227,16 +242,16 @@ async function setPageState(tabId, url, state) {
       updatedAt: Date.now()
     }
   });
-  await updateActionIconForTab(tabId, tab);
+  await updateActionIconForTab(tabId, tab, url);
 }
 
 async function clearPageState(tabId) {
-  if (!tabId) return;
+  if (!Number.isInteger(tabId)) return;
   await getSessionStorage().remove(pageStateKey(tabId));
 }
 
 async function isPageActive(tabId, url) {
-  if (!tabId || !url) return false;
+  if (!Number.isInteger(tabId) || !url) return false;
   const key = pageStateKey(tabId);
   const data = await getSessionStorage().get(key);
   return data[key]?.state === "active" && data[key]?.url === normalizeUrlForPageState(url);
@@ -256,6 +271,12 @@ async function getTabForStateUpdate(tabId) {
 
 function isSamePageStateUrl(currentUrl, messageUrl) {
   return normalizeUrlForPageState(currentUrl) === normalizeUrlForPageState(messageUrl);
+}
+
+function canUsePageStateUrl(currentUrl, messageUrl) {
+  if (!messageUrl) return false;
+  if (!currentUrl) return true;
+  return isSamePageStateUrl(currentUrl, messageUrl);
 }
 
 function getSessionStorage() {
@@ -291,7 +312,7 @@ async function translateBatch(items, targetLang, sender, options = {}) {
   }
 
   const translated = missing.length
-    ? await scheduleDeepSeekRequest(missing, lang, config, priority)
+    ? await scheduleDeepSeekRequest(missing, lang, config, priority, host)
     : [];
   const recordsToSave = [];
 
@@ -350,22 +371,29 @@ async function prepareCacheItems(items, host, targetLang, model) {
     .filter((item) => item.id && item.text);
 
   return Promise.all(
-    normalizedItems.map(async (item) => ({
-      ...item,
-      textHash: await sha256(item.text),
-      key: await cacheKey(host, targetLang, model, item.text),
-      localPattern: await prepareLocalPattern(item.text, host, targetLang, model)
-    }))
+    normalizedItems.map(async (item) => {
+      const textHash = await sha256(item.text);
+      return {
+        ...item,
+        textHash,
+        key: buildCacheKey(host, targetLang, model, textHash),
+        localPattern: await prepareLocalPattern(item.text, host, targetLang, model)
+      };
+    })
   );
 }
 
-function scheduleDeepSeekRequest(items, targetLang, config, priority) {
+function scheduleDeepSeekRequest(items, targetLang, config, priority, host) {
   return new Promise((resolve, reject) => {
     translationScheduler.queues[priority].push({
       items,
       targetLang,
       config,
       priority,
+      host,
+      cancelled: false,
+      active: false,
+      abortController: null,
       resolve,
       reject
     });
@@ -381,10 +409,20 @@ function runScheduledRequests() {
     translationScheduler.activeTotal += 1;
     if (task.priority === "normal") translationScheduler.activeNormal += 1;
     if (task.priority === "visible") translationScheduler.activeVisible += 1;
+    task.active = true;
+    task.abortController = new AbortController();
+    translationScheduler.activeTasks.add(task);
 
-    requestDeepSeek(task.items, task.targetLang, task.config)
-      .then(task.resolve, task.reject)
+    requestDeepSeek(task.items, task.targetLang, task.config, task.abortController.signal)
+      .then((result) => {
+        if (task.cancelled) {
+          task.reject(createCancellationError(task.host));
+          return;
+        }
+        task.resolve(result);
+      }, task.reject)
       .finally(() => {
+        translationScheduler.activeTasks.delete(task);
         translationScheduler.activeTotal -= 1;
         if (task.priority === "normal") translationScheduler.activeNormal -= 1;
         if (task.priority === "visible") translationScheduler.activeVisible -= 1;
@@ -415,13 +453,43 @@ function takeNextScheduledTask() {
   return null;
 }
 
+function cancelTranslationWorkForHosts(hosts) {
+  const disabledHosts = new Set(Array.from(hosts || []).filter(Boolean));
+  if (!disabledHosts.size) return;
+
+  for (const priority of Object.keys(translationScheduler.queues)) {
+    const keptTasks = [];
+    for (const task of translationScheduler.queues[priority]) {
+      if (disabledHosts.has(task.host)) {
+        task.cancelled = true;
+        task.reject(createCancellationError(task.host));
+      } else {
+        keptTasks.push(task);
+      }
+    }
+    translationScheduler.queues[priority] = keptTasks;
+  }
+
+  for (const task of translationScheduler.activeTasks) {
+    if (!disabledHosts.has(task.host)) continue;
+    task.cancelled = true;
+    task.reject(createCancellationError(task.host));
+    task.abortController?.abort();
+  }
+}
+
+function createCancellationError(host) {
+  return new Error(t("errorTranslationCancelled", [host || ""]));
+}
+
 function normalizePriority(priority) {
   return priority === "visible" ? "visible" : "normal";
 }
 
-async function requestDeepSeek(items, targetLang, config) {
+async function requestDeepSeek(items, targetLang, config, signal) {
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
+    signal,
     headers: {
       "Authorization": `Bearer ${config.apiKey}`,
       "Content-Type": "application/json"
@@ -457,8 +525,31 @@ async function requestDeepSeek(items, targetLang, config) {
 
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content || "";
-  const parsed = JSON.parse(content);
-  return Array.isArray(parsed.items) ? parsed.items : [];
+  return parseDeepSeekItems(content);
+}
+
+function parseDeepSeekItems(content) {
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error(t("errorDeepSeekMalformedResponse"));
+  }
+
+  if (!Array.isArray(parsed?.items)) {
+    throw new Error(t("errorDeepSeekMalformedResponse"));
+  }
+
+  return parsed.items.map((item) => {
+    const idType = typeof item?.id;
+    if ((idType !== "string" && idType !== "number") || typeof item.translation !== "string") {
+      throw new Error(t("errorDeepSeekMalformedResponse"));
+    }
+    return {
+      id: String(item.id),
+      translation: item.translation
+    };
+  });
 }
 
 async function getConfig() {
@@ -486,34 +577,30 @@ async function getCachedTranslations(items) {
 }
 
 async function getDirectCachedTranslations(items) {
-  if (!items.length) return new Map();
-
-  const db = await openTranslationsDb();
-  const transaction = db.transaction(TRANSLATIONS_STORE, "readwrite");
-  const store = transaction.objectStore(TRANSLATIONS_STORE);
-  const records = new Map();
-  const now = Date.now();
-
-  await Promise.all(items.map((item) => new Promise((resolve, reject) => {
-    const request = store.get(item.key);
-    request.onsuccess = () => {
-      const record = request.result;
-      if (record) {
-        record.hitCount = (record.hitCount || 0) + 1;
-        record.updatedAt = now;
-        store.put(record);
-        records.set(item.key, record);
-      }
-      resolve();
-    };
-    request.onerror = () => reject(request.error);
-  })));
-
-  await waitForTransaction(transaction);
-  return records;
+  return getCachedTranslationRecords(
+    items,
+    (item) => item.key,
+    (record, item) => [item.key, record]
+  );
 }
 
 async function getPatternCachedTranslations(items) {
+  return getCachedTranslationRecords(
+    items,
+    (item) => item.localPattern?.key,
+    (record, item) => {
+      const translation = hydrateLocalPattern(record, item.localPattern.numbers);
+      if (!translation) return null;
+      return [item.key, {
+        ...record,
+        key: item.key,
+        translation
+      }];
+    }
+  );
+}
+
+async function getCachedTranslationRecords(items, keySelector, recordMapper) {
   if (!items.length) return new Map();
 
   const db = await openTranslationsDb();
@@ -523,19 +610,20 @@ async function getPatternCachedTranslations(items) {
   const now = Date.now();
 
   await Promise.all(items.map((item) => new Promise((resolve, reject) => {
-    const request = store.get(item.localPattern.key);
+    const key = keySelector(item);
+    if (!key) {
+      resolve();
+      return;
+    }
+    const request = store.get(key);
     request.onsuccess = () => {
       const record = request.result;
-      const translation = hydrateLocalPattern(record, item.localPattern.numbers);
-      if (translation) {
+      const mapped = record ? recordMapper(record, item) : null;
+      if (mapped) {
         record.hitCount = (record.hitCount || 0) + 1;
         record.updatedAt = now;
         store.put(record);
-        records.set(item.key, {
-          ...record,
-          key: item.key,
-          translation
-        });
+        records.set(mapped[0], mapped[1]);
       }
       resolve();
     };
@@ -627,6 +715,10 @@ async function cleanupExpiredTranslations(expireBefore) {
 
 async function cacheKey(host, targetLang, model, text) {
   const hash = await sha256(text);
+  return buildCacheKey(host, targetLang, model, hash);
+}
+
+function buildCacheKey(host, targetLang, model, hash) {
   return `${host}:${targetLang}:${model}:${hash}`;
 }
 

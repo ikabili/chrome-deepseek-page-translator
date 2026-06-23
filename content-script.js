@@ -16,7 +16,8 @@
     inFlight: false,
     visibleInFlight: false,
     lastHref: location.href,
-    readyRescansInstalled: false
+    readyRescansInstalled: false,
+    routeVersion: 0
   };
 
   const INITIAL_FLUSH_DELAY_MS = 100;
@@ -52,8 +53,7 @@
     }
 
     if (message?.type === "translator:stop") {
-      stopTranslator(false);
-      markPageState("original");
+      stopTranslator(true);
       sendResponse({ ok: true });
     }
 
@@ -120,13 +120,12 @@
     state.pendingNodes.clear();
     state.activeNodeIds.clear();
     clearLoadingIndicators();
-    if (state.flushTimer) window.clearTimeout(state.flushTimer);
-    if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
+    clearRouteTimers();
     if (state.observer) {
       state.observer.disconnect();
       state.observer = null;
     }
-    if (restoreOriginal) restorePage();
+    if (restoreOriginal) markPageOriginal({ restore: true });
   }
 
   function installObserver() {
@@ -162,12 +161,14 @@
     if (window.__deepseekTranslatorUrlWatcher) return;
     window.__deepseekTranslatorUrlWatcher = window.setInterval(() => {
       if (!state.enabled || state.lastHref === location.href) return;
+      const previousHref = state.lastHref;
       state.lastHref = location.href;
-      markPageState("original");
+      markPageOriginal({ restore: true, url: previousHref });
+      resetRouteTranslationState();
       window.setTimeout(() => {
         if (!state.enabled) return;
         scanCurrentDocument();
-        markPageState("active");
+        markPageState("active", location.href);
         scheduleFlush(URL_CHANGE_FLUSH_DELAY_MS);
       }, 350);
     }, 800);
@@ -260,15 +261,18 @@
   async function flushQueue() {
     state.flushTimer = 0;
     if (!state.enabled || state.inFlight || state.pendingNodes.size === 0) return;
+    const routeVersion = state.routeVersion;
     state.inFlight = true;
 
     try {
-      await flushNodes(takeNextPendingNodes(MAX_NODES_PER_FLUSH, false), "normal");
+      await flushNodes(takeNextPendingNodes(MAX_NODES_PER_FLUSH, false), "normal", routeVersion);
     } catch (error) {
       showTranslatorNotice(error.message || String(error));
     } finally {
-      state.inFlight = false;
-      if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+      if (isCurrentRoute(routeVersion)) {
+        state.inFlight = false;
+        if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+      }
     }
   }
 
@@ -276,20 +280,22 @@
     state.visibleFlushTimer = 0;
     if (!state.enabled || state.visibleInFlight) return;
 
-    scanCurrentDocument();
+    const routeVersion = state.routeVersion;
     state.visibleInFlight = true;
 
     try {
-      await flushNodes(takeNextPendingNodes(MAX_VISIBLE_NODES_PER_FLUSH, true), "visible");
+      await flushNodes(takeNextPendingNodes(MAX_VISIBLE_NODES_PER_FLUSH, true), "visible", routeVersion);
     } catch (error) {
       showTranslatorNotice(error.message || String(error));
     } finally {
-      state.visibleInFlight = false;
-      if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+      if (isCurrentRoute(routeVersion)) {
+        state.visibleInFlight = false;
+        if (state.pendingNodes.size) scheduleFlush(INITIAL_FLUSH_DELAY_MS);
+      }
     }
   }
 
-  async function flushNodes(nodes, priority) {
+  async function flushNodes(nodes, priority, routeVersion = state.routeVersion) {
     const items = nodes
       .map((node) => state.nodeMap.get(node))
       .filter((record) => record && record.original && !record.translated)
@@ -304,6 +310,7 @@
         items
       });
 
+      if (!isCurrentRoute(routeVersion)) return;
       if (cachedResponse?.ok) {
         if (!state.enabled) return;
         applyTranslations(nodes, cachedResponse.items || []);
@@ -329,7 +336,7 @@
             items: chunk
           });
 
-          if (!state.enabled) return;
+          if (!state.enabled || !isCurrentRoute(routeVersion)) return;
           if (response?.ok) {
             const chunkNodes = chunk
               .map((item) => nodesById.get(String(item.id)))
@@ -341,8 +348,10 @@
         }));
       }
     } finally {
-      clearLoadingForNodes(nodes);
-      releaseActiveNodes(nodes);
+      if (isCurrentRoute(routeVersion)) {
+        clearLoadingForNodes(nodes);
+        releaseActiveNodes(nodes);
+      }
     }
   }
 
@@ -436,10 +445,7 @@
 
   function restorePage() {
     const root = document.body || document.documentElement;
-    if (!root) {
-      markPageState("original");
-      return;
-    }
+    if (!root) return;
 
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const nodes = [];
@@ -457,15 +463,40 @@
       }
       removeLoadingIndicator(textNode);
     }
-
-    markPageState("original");
   }
 
-  function markPageState(pageState) {
+  function markPageOriginal({ restore = true, url = location.href } = {}) {
+    if (restore) restorePage();
+    markPageState("original", url);
+  }
+
+  function resetRouteTranslationState() {
+    state.routeVersion += 1;
+    state.pendingNodes.clear();
+    state.activeNodeIds.clear();
+    clearLoadingIndicators();
+    clearRouteTimers();
+    state.nodeMap = new WeakMap();
+    state.inFlight = false;
+    state.visibleInFlight = false;
+  }
+
+  function isCurrentRoute(routeVersion) {
+    return routeVersion === state.routeVersion;
+  }
+
+  function clearRouteTimers() {
+    if (state.flushTimer) window.clearTimeout(state.flushTimer);
+    if (state.visibleFlushTimer) window.clearTimeout(state.visibleFlushTimer);
+    state.flushTimer = 0;
+    state.visibleFlushTimer = 0;
+  }
+
+  function markPageState(pageState, url = location.href) {
     chrome.runtime.sendMessage({
       type: "translator:set-page-state",
       state: pageState,
-      url: location.href
+      url
     }).catch(() => {});
   }
 
@@ -602,10 +633,6 @@
     if (BLOCKED_TAGS.has(node.tagName)) return true;
     if (node.closest?.("[data-deepseek-translator-ignore]")) return true;
     return false;
-  }
-
-  function isVisible(element) {
-    return Boolean(getVisibleRect(element));
   }
 
   function getVisibleRect(element) {

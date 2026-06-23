@@ -57,8 +57,8 @@ function bindEvents() {
   });
 
   els.restoreButton.addEventListener("click", async () => {
-    await sendToActiveTab({ type: "translator:restore" });
-    setStatus(t("statusRestoreAttempted"));
+    const response = await sendToActiveTab({ type: "translator:restore" });
+    setStatus(response?.ok === false ? response.error : t("statusRestoreAttempted"));
   });
 
   els.clearCacheButton.addEventListener("click", async () => {
@@ -88,6 +88,7 @@ function bindEvents() {
 
 function localizeStaticUi() {
   document.documentElement.lang = chrome.i18n.getUILanguage?.() || "en";
+  document.title = t("popupTitle");
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     const message = t(element.dataset.i18n);
     if (message) element.textContent = message;

@@ -119,6 +119,9 @@
   "errorTranslationFailed": {
     "message": "Translation request failed"
   },
+  "errorTranslationCancelled": {
+    "message": "Translation was cancelled because this site is disabled"
+  },
   "errorDeepSeekRequestFailed": {
     "message": "DeepSeek request failed: $STATUS$ $DETAIL$",
     "placeholders": {
@@ -129,5 +132,8 @@
         "content": "$2"
       }
     }
+  },
+  "errorDeepSeekMalformedResponse": {
+    "message": "DeepSeek returned an invalid translation response"
   }
 }

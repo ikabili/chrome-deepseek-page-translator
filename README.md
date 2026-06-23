@@ -13,9 +13,10 @@ Full English guide: [DeepSeek Page Translator User Guide](DeepSeek%20Page%20Tran
 - Enable continuous translation for the current domain.
 - Translate newly added content on dynamic pages and SPAs.
 - Cache translations in the extension's IndexedDB database.
-- Restore original text on the current page.
+- Restore visible original text on the current page.
 - Clear cache for the current domain.
 - Use `deepseek-v4-flash` or `deepseek-v4-pro`.
+- Toolbar icons use an Abc/中 language badge style, with colored and gray states.
 - Localized extension UI: Simplified Chinese for `zh-CN`, English for other browser UI languages.
 
 ## Install Locally
@@ -32,5 +33,9 @@ Full English guide: [DeepSeek Page Translator User Guide](DeepSeek%20Page%20Tran
 Your API Key is stored in your own browser with `chrome.storage.local`. It is not written to this project directory or to packaged ZIP files.
 
 Visible page text that needs translation is sent to the DeepSeek API. Translation cache is stored in the extension's own IndexedDB database named `deepseek-page-translator`, object store `translations`.
+
+The content script sends up to 10 text items per translation request. The service worker can run up to 50 API requests in parallel, reserving 20 slots for visible text.
+
+Restoring or disabling a site restores visible translated text on affected open pages. Disabling continuous translation does not clear cache; use Clear cache to remove the current domain's IndexedDB records.
 
 Do not commit API Keys, browser profile data, screenshots containing keys, or packaged ZIP files.

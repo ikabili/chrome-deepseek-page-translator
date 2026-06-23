@@ -116,6 +116,9 @@
   "errorTranslationFailed": {
     "message": "翻译请求失败"
   },
+  "errorTranslationCancelled": {
+    "message": "由于该网站已禁用翻译，本次翻译已取消"
+  },
   "errorDeepSeekRequestFailed": {
     "message": "DeepSeek 请求失败：$STATUS$ $DETAIL$",
     "placeholders": {
@@ -126,5 +129,8 @@
         "content": "$2"
       }
     }
+  },
+  "errorDeepSeekMalformedResponse": {
+    "message": "DeepSeek 返回了无效的翻译结果"
   }
 }

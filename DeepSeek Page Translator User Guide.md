@@ -18,9 +18,10 @@ The extension UI is localized with Chrome i18n. It shows Simplified Chinese when
 - Automatic cleanup for translation cache not used for 90 days
 - Limited concurrent DeepSeek API requests
 - Loading spinner while uncached text is being translated
-- Restore original text on the current page
+- Restore visible original text on the current page
 - Clear cache for the current domain
 - Manage enabled sites from the popup
+- Abc/中 language badge toolbar icons with colored and gray states
 
 ## 3. Installation
 
@@ -31,14 +32,14 @@ The extension UI is localized with Chrome i18n. It shows Simplified Chinese when
 5. Enable Developer mode.
 6. Click Load unpacked.
 7. Select the folder that contains `manifest.json`.
-8. The DeepSeek icon appears in the Chrome toolbar after loading.
+8. The extension's Abc/中 language badge icon appears in the Chrome toolbar after loading.
 
 Chrome cannot load a ZIP file directly in Developer mode. You must select the unpacked folder.
 
 ## 4. First-Time Setup
 
 1. Open any web page.
-2. Click the DeepSeek icon in the Chrome toolbar.
+2. Click the Abc/中 language badge icon in the Chrome toolbar.
 3. Enter your DeepSeek API Key.
 4. Select a target language.
 5. Select a model:
@@ -123,12 +124,10 @@ The extension limits DeepSeek API concurrency.
 Current rules:
 
 ```text
-Up to 20 text items per request
-1-39 misses: 1 concurrent request
-40-59 misses: 2 concurrent requests
-60-79 misses: 3 concurrent requests
-80-99 misses: 4 concurrent requests
-100+ misses: up to 5 concurrent requests
+Content script: up to 10 text items per translation request
+Service worker: up to 50 parallel API requests
+Visible text reservation: 20 parallel slots are reserved for visible-priority work
+Normal text limit: up to 30 parallel normal-priority requests while visible slots are reserved
 ```
 
 Cached text does not enter API requests.
@@ -145,7 +144,7 @@ When the API returns:
 
 ## 11. Restore Original Text
 
-Click Restore original to restore translated text on the current page.
+Click Restore original to restore visible translated text on the current page.
 
 This only affects the current page. It does not delete cache and does not disable continuous translation for the domain.
 
@@ -166,7 +165,7 @@ The popup lists domains with continuous translation enabled.
 
 Each site has two actions:
 
-- Disable: turn off continuous translation, keeping the target language setting.
+- Disable: turn off continuous translation, keeping the target language setting and cache. If the disabled domain is open, visible translated text is restored.
 - Delete: remove the site configuration and clear that domain's cache.
 
 ## 14. Translation Prompt
@@ -218,4 +217,3 @@ No. The ZIP contains only extension code and assets. Each user enters their own 
 ## 16. Security Notes
 
 Do not expose your API Key in screenshots, recordings, documents, or source files. Do not share a Chrome browser profile that already contains your API Key.
-
