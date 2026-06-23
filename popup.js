@@ -5,10 +5,25 @@ const DEFAULT_CONFIG = {
   sites: {}
 };
 
+const DEFAULT_PAGE_STATUS = {
+  ok: true,
+  host: "",
+  canRun: false,
+  enabled: false,
+  pageState: "original",
+  hasApiKey: false
+};
+
 const els = {
   domainText: document.getElementById("domainText"),
   enabledInput: document.getElementById("enabledInput"),
+  siteStatusText: document.getElementById("siteStatusText"),
+  pageStatusText: document.getElementById("pageStatusText"),
+  apiStatusText: document.getElementById("apiStatusText"),
+  settingsPanel: document.getElementById("settingsPanel"),
+  settingsSummary: document.getElementById("settingsSummary"),
   apiKeyInput: document.getElementById("apiKeyInput"),
+  apiKeyHint: document.getElementById("apiKeyHint"),
   targetLangInput: document.getElementById("targetLangInput"),
   modelInput: document.getElementById("modelInput"),
   translateButton: document.getElementById("translateButton"),
@@ -23,6 +38,7 @@ const els = {
 let activeTab = null;
 let activeHost = "";
 let config = { ...DEFAULT_CONFIG };
+let pageStatus = { ...DEFAULT_PAGE_STATUS };
 
 init();
 
@@ -30,9 +46,8 @@ async function init() {
   localizeStaticUi();
   activeTab = await getActiveTab();
   activeHost = getHost(activeTab?.url);
-  els.domainText.textContent = activeHost || t("domainUnavailable");
-
   config = await loadConfig();
+  pageStatus = await getPageStatus();
   renderConfig();
   bindEvents();
 }
@@ -40,25 +55,55 @@ async function init() {
 function bindEvents() {
   els.saveButton.addEventListener("click", async () => {
     await saveFromForm();
+    await refreshPageStatus();
     setStatus(t("statusSettingsSaved"));
   });
 
   els.enabledInput.addEventListener("change", async () => {
-    await saveFromForm();
+    await saveFromForm({ render: false });
     const response = await sendToActiveTab({ type: els.enabledInput.checked ? "translator:start" : "translator:stop" });
     await updateActionIcon();
-    setStatus(response?.ok === false ? response.error : t(els.enabledInput.checked ? "statusDomainEnabled" : "statusDomainDisabled"));
+
+    if (response?.ok === false) {
+      els.settingsPanel.open = true;
+      setStatus(response.error);
+    } else {
+      if (!els.enabledInput.checked) pageStatus.pageState = "original";
+      setStatus(t(els.enabledInput.checked ? "statusDomainEnabled" : "statusDomainDisabled"));
+    }
+
+    await refreshPageStatus();
   });
 
   els.translateButton.addEventListener("click", async () => {
-    await saveFromForm();
+    await saveFromForm({ render: false });
     const response = await sendToActiveTab({ type: "translator:start" });
-    setStatus(response?.ok === false ? response.error : t("statusTranslatingPage"));
+
+    if (response?.ok === false) {
+      els.settingsPanel.open = true;
+      setStatus(response.error);
+      await refreshPageStatus();
+      return;
+    }
+
+    pageStatus.pageState = "active";
+    renderConfig();
+    setStatus(t("statusTranslatingPage"));
+    await refreshPageStatus();
   });
 
   els.restoreButton.addEventListener("click", async () => {
     const response = await sendToActiveTab({ type: "translator:restore" });
-    setStatus(response?.ok === false ? response.error : t("statusRestoreAttempted"));
+    if (response?.ok === false) {
+      setStatus(response.error);
+      return;
+    }
+
+    pageStatus.pageState = "original";
+    renderConfig();
+    await updateActionIcon();
+    setStatus(t("statusRestoreAttempted"));
+    await refreshPageStatus();
   });
 
   els.clearCacheButton.addEventListener("click", async () => {
@@ -105,11 +150,61 @@ function localizeStaticUi() {
 
 function renderConfig() {
   const site = config.sites?.[activeHost] || {};
+  const targetLang = site.targetLang || config.targetLang || DEFAULT_CONFIG.targetLang;
+  const model = config.model || DEFAULT_CONFIG.model;
+  const hasApiKey = Boolean(config.apiKey);
+  const canRun = Boolean(pageStatus.canRun);
+  const pageActive = pageStatus.pageState === "active";
+
+  els.domainText.textContent = getDisplayLocation(activeTab?.url);
   els.apiKeyInput.value = config.apiKey || "";
-  els.targetLangInput.value = site.targetLang || config.targetLang || DEFAULT_CONFIG.targetLang;
-  els.modelInput.value = config.model || DEFAULT_CONFIG.model;
+  els.targetLangInput.value = targetLang;
+  els.modelInput.value = model;
   els.enabledInput.checked = Boolean(site.enabled);
+  els.enabledInput.disabled = !activeHost || !canRun;
+  els.translateButton.disabled = !canRun;
+  els.restoreButton.disabled = !canRun || !pageActive;
+  els.clearCacheButton.disabled = !activeHost;
+  els.translateButton.textContent = t(pageActive ? "continueTranslatingButton" : "translateCurrentPageButton");
+
+  renderStatusRows({ site, canRun, pageActive, hasApiKey });
+  renderSettingsSummary({ targetLang, model, hasApiKey });
   renderEnabledSites();
+}
+
+function renderStatusRows({ site, canRun, pageActive, hasApiKey }) {
+  setBadge(
+    els.siteStatusText,
+    !canRun ? t("siteStatusUnavailable") : site.enabled ? t("siteStatusEnabled") : t("siteStatusDisabled"),
+    !canRun ? "warning" : site.enabled ? "success" : "muted"
+  );
+  setBadge(
+    els.pageStatusText,
+    !canRun ? t("pageStatusUnavailable") : pageActive ? t("pageStatusTranslated") : t("pageStatusOriginal"),
+    !canRun ? "warning" : pageActive ? "success" : "muted"
+  );
+  setBadge(
+    els.apiStatusText,
+    hasApiKey ? t("apiStatusReady") : t("apiStatusMissing"),
+    hasApiKey ? "success" : "warning"
+  );
+
+  els.apiKeyHint.textContent = hasApiKey ? t("apiKeyConfiguredHint") : t("apiKeyMissingHint");
+  els.apiKeyHint.dataset.state = hasApiKey ? "success" : "warning";
+  if (!hasApiKey) els.settingsPanel.open = true;
+}
+
+function renderSettingsSummary({ targetLang, model, hasApiKey }) {
+  els.settingsSummary.textContent = t("settingsSummary", [
+    displayLanguage(targetLang),
+    displayModel(model),
+    hasApiKey ? t("apiStatusReady") : t("apiStatusMissing")
+  ]);
+}
+
+function setBadge(element, text, state) {
+  element.textContent = text;
+  element.dataset.state = state;
 }
 
 function renderEnabledSites() {
@@ -171,7 +266,7 @@ function createSiteButton(label, action, host, isDanger = false) {
   return button;
 }
 
-async function saveFromForm() {
+async function saveFromForm({ render = true } = {}) {
   const nextSites = { ...(config.sites || {}) };
   if (activeHost) {
     nextSites[activeHost] = {
@@ -190,7 +285,7 @@ async function saveFromForm() {
   };
 
   await chrome.storage.local.set({ translatorConfig: config });
-  renderConfig();
+  if (render) renderConfig();
   await updateActionIcon();
 }
 
@@ -207,9 +302,11 @@ async function disableSite(host) {
   if (host === activeHost) {
     els.enabledInput.checked = false;
     await sendToActiveTab({ type: "translator:stop" });
+    pageStatus.pageState = "original";
     await updateActionIcon();
   }
   renderConfig();
+  await refreshPageStatus();
 }
 
 async function deleteSite(host) {
@@ -221,9 +318,37 @@ async function deleteSite(host) {
   if (host === activeHost) {
     els.enabledInput.checked = false;
     await sendToActiveTab({ type: "translator:stop" });
+    pageStatus.pageState = "original";
     await updateActionIcon();
   }
   renderConfig();
+  await refreshPageStatus();
+}
+
+async function refreshPageStatus() {
+  pageStatus = await getPageStatus();
+  renderConfig();
+}
+
+async function getPageStatus() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "translator:get-page-status",
+      tabId: activeTab?.id,
+      url: activeTab?.url
+    });
+    if (response?.ok) return { ...DEFAULT_PAGE_STATUS, ...response };
+  } catch {
+    // The popup can still render from local config if the service worker is waking.
+  }
+
+  return {
+    ...DEFAULT_PAGE_STATUS,
+    host: activeHost,
+    canRun: canRunOnUrl(activeTab?.url),
+    enabled: Boolean(config.sites?.[activeHost]?.enabled),
+    hasApiKey: Boolean(config.apiKey)
+  };
 }
 
 async function loadConfig() {
@@ -249,11 +374,31 @@ function getHost(url) {
   }
 }
 
+function getDisplayLocation(url) {
+  try {
+    const parsed = new URL(url || "");
+    if (parsed.hostname) return parsed.hostname;
+    if (parsed.protocol === "file:") return t("filePageLabel");
+  } catch {
+    // Fall through to the unavailable label.
+  }
+  return t("domainUnavailable");
+}
+
+function canRunOnUrl(url) {
+  try {
+    const protocol = new URL(url || "").protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "file:";
+  } catch {
+    return false;
+  }
+}
+
 async function sendToActiveTab(message) {
-  if (!activeTab?.id) return;
+  if (!activeTab?.id) return { ok: false, error: t("statusCannotInjectScript") };
   try {
     return await chrome.tabs.sendMessage(activeTab.id, message);
-  } catch (error) {
+  } catch {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: activeTab.id },
@@ -272,19 +417,29 @@ async function updateActionIcon() {
   if (!activeTab?.id) return;
   await chrome.runtime.sendMessage({
     type: "translator:update-action-icon",
-    tabId: activeTab.id
+    tabId: activeTab.id,
+    url: activeTab.url
   });
 }
 
 function setStatus(text) {
   els.statusText.textContent = text;
+  els.statusText.classList.toggle("visible", Boolean(text));
   window.setTimeout(() => {
-    if (els.statusText.textContent === text) els.statusText.textContent = "";
-  }, 2600);
+    if (els.statusText.textContent === text) {
+      els.statusText.textContent = "";
+      els.statusText.classList.remove("visible");
+    }
+  }, 2800);
 }
 
 function displayLanguage(value) {
   const option = Array.from(els.targetLangInput.options).find((item) => item.value === value);
+  return option?.textContent || value;
+}
+
+function displayModel(value) {
+  const option = Array.from(els.modelInput.options).find((item) => item.value === value);
   return option?.textContent || value;
 }
 

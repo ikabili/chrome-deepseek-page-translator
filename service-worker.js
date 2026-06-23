@@ -80,6 +80,10 @@ async function handleMessage(message, sender) {
     return getCachedBatch(message.items || [], message.targetLang, sender);
   }
 
+  if (message?.type === "translator:get-page-status") {
+    return getPageStatus(message, sender);
+  }
+
   if (message?.type === "translator:clear-cache") {
     await clearCache(message.host || getSenderHost(sender));
     return { ok: true };
@@ -98,6 +102,26 @@ async function handleMessage(message, sender) {
   }
 
   return { ok: false, error: "Unknown message type" };
+}
+
+async function getPageStatus(message, sender) {
+  const config = await getConfig();
+  const tabId = sender?.tab?.id ?? message.tabId;
+  const url = message.url || sender?.url || sender?.tab?.url || "";
+  const host = getHostFromUrl(url);
+  const canRun = canRunOnUrl(url);
+  const pageActive = canRun ? await isPageActive(tabId, url) : false;
+
+  return {
+    ok: true,
+    host,
+    canRun,
+    enabled: Boolean(host && config.sites?.[host]?.enabled),
+    pageState: pageActive ? "active" : "original",
+    targetLang: host && config.sites?.[host]?.targetLang || config.targetLang,
+    model: config.model || DEFAULT_CONFIG.model,
+    hasApiKey: Boolean(config.apiKey)
+  };
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {

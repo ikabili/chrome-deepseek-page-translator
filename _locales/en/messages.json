@@ -14,6 +14,9 @@
   "popupTitle": {
     "message": "DeepSeek Translator"
   },
+  "filePageLabel": {
+    "message": "Local file"
+  },
   "domainLoading": {
     "message": "Loading current domain..."
   },
@@ -28,6 +31,62 @@
   },
   "apiKeyPlaceholder": {
     "message": "sk-..."
+  },
+  "apiKeyConfiguredHint": {
+    "message": "Saved"
+  },
+  "apiKeyMissingHint": {
+    "message": "Required"
+  },
+  "siteStatusLabel": {
+    "message": "Site"
+  },
+  "pageStatusLabel": {
+    "message": "Page"
+  },
+  "apiStatusLabel": {
+    "message": "API Key"
+  },
+  "siteStatusEnabled": {
+    "message": "Auto on"
+  },
+  "siteStatusDisabled": {
+    "message": "Auto off"
+  },
+  "siteStatusUnavailable": {
+    "message": "Unavailable"
+  },
+  "pageStatusTranslated": {
+    "message": "Translated"
+  },
+  "pageStatusOriginal": {
+    "message": "Original"
+  },
+  "pageStatusUnavailable": {
+    "message": "Cannot translate"
+  },
+  "apiStatusReady": {
+    "message": "Ready"
+  },
+  "apiStatusMissing": {
+    "message": "Missing"
+  },
+  "translationSettingsTitle": {
+    "message": "Translation settings"
+  },
+  "settingsSummary": {
+    "message": "$LANG$ | $MODEL$ | $API$",
+    "placeholders": {
+      "lang": {
+        "content": "$1"
+      },
+      "model": {
+        "content": "$2"
+      },
+      "api": {
+        "content": "$3"
+      }
+    }
   },
   "targetLanguageLabel": {
     "message": "Target language"
@@ -44,6 +103,9 @@
   "translateCurrentPageButton": {
     "message": "Translate page"
   },
+  "continueTranslatingButton": {
+    "message": "Continue translating"
+  },
   "restoreOriginalButton": {
     "message": "Restore original"
   },
@@ -56,8 +118,11 @@
   "enabledSitesTitle": {
     "message": "Enabled sites"
   },
+  "enabledSitesDescription": {
+    "message": "Sites with continuous translation stay ready for next visit."
+  },
   "emptyEnabledSites": {
-    "message": "No enabled sites yet"
+    "message": "Turn on the current site to keep it translated next time."
   },
   "disableSiteButton": {
     "message": "Disable"

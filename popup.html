@@ -8,10 +8,13 @@
   </head>
   <body>
     <main class="panel">
-      <header class="header">
-        <div>
-          <h1 data-i18n="popupTitle">DeepSeek Translator</h1>
-          <p id="domainText" data-i18n="domainLoading">Loading current domain...</p>
+      <header class="hero">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">中</span>
+          <div>
+            <h1 data-i18n="popupTitle">DeepSeek Translator</h1>
+            <p id="domainText" data-i18n="domainLoading">Loading current domain...</p>
+          </div>
         </div>
         <label class="switch" title="Enable continuous translation for this domain" data-i18n-title="domainSwitchTitle">
           <input id="enabledInput" type="checkbox">
@@ -19,53 +22,81 @@
         </label>
       </header>
 
-      <section class="field">
-        <label for="apiKeyInput" data-i18n="apiKeyLabel">API Key</label>
-        <input id="apiKeyInput" type="password" placeholder="sk-..." data-i18n-placeholder="apiKeyPlaceholder" autocomplete="off">
+      <section class="status-card">
+        <div class="status-row">
+          <span data-i18n="siteStatusLabel">Site</span>
+          <strong id="siteStatusText" class="state-badge">Checking...</strong>
+        </div>
+        <div class="status-row">
+          <span data-i18n="pageStatusLabel">Page</span>
+          <strong id="pageStatusText" class="state-badge">Checking...</strong>
+        </div>
+        <div class="status-row">
+          <span data-i18n="apiStatusLabel">API Key</span>
+          <strong id="apiStatusText" class="state-badge">Checking...</strong>
+        </div>
       </section>
 
-      <section class="row">
-        <label class="field compact" for="targetLangInput">
-          <span data-i18n="targetLanguageLabel">Target language</span>
-          <select id="targetLangInput">
-            <option value="zh-CN" data-i18n="languageZhCn">Simplified Chinese</option>
-            <option value="zh-TW" data-i18n="languageZhTw">Traditional Chinese</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="fr">Français</option>
-            <option value="de">Deutsch</option>
-            <option value="es">Español</option>
-          </select>
-        </label>
-        <label class="field compact" for="modelInput">
-          <span data-i18n="modelLabel">Model</span>
-          <select id="modelInput">
-            <option value="deepseek-v4-flash">V4 Flash</option>
-            <option value="deepseek-v4-pro">V4 Pro</option>
-          </select>
-        </label>
-      </section>
-
-      <section class="actions">
+      <section class="quick-actions">
         <button id="translateButton" type="button" data-i18n="translateCurrentPageButton">Translate page</button>
         <button id="restoreButton" type="button" class="secondary" data-i18n="restoreOriginalButton">Restore original</button>
       </section>
 
-      <section class="actions">
-        <button id="clearCacheButton" type="button" class="secondary" data-i18n="clearCacheButton">Clear cache</button>
-        <button id="saveButton" type="button" class="secondary" data-i18n="saveSettingsButton">Save settings</button>
-      </section>
+      <details id="settingsPanel" class="settings-panel">
+        <summary>
+          <span data-i18n="translationSettingsTitle">Translation settings</span>
+          <small id="settingsSummary"></small>
+        </summary>
+
+        <section class="field api-field">
+          <div class="field-label-row">
+            <label for="apiKeyInput" data-i18n="apiKeyLabel">API Key</label>
+            <span id="apiKeyHint" class="hint"></span>
+          </div>
+          <input id="apiKeyInput" type="password" placeholder="sk-..." data-i18n-placeholder="apiKeyPlaceholder" autocomplete="off">
+        </section>
+
+        <section class="row">
+          <label class="field compact" for="targetLangInput">
+            <span data-i18n="targetLanguageLabel">Target language</span>
+            <select id="targetLangInput">
+              <option value="zh-CN" data-i18n="languageZhCn">Simplified Chinese</option>
+              <option value="zh-TW" data-i18n="languageZhTw">Traditional Chinese</option>
+              <option value="en">English</option>
+              <option value="ja">日本語</option>
+              <option value="ko">한국어</option>
+              <option value="fr">Français</option>
+              <option value="de">Deutsch</option>
+              <option value="es">Español</option>
+            </select>
+          </label>
+          <label class="field compact" for="modelInput">
+            <span data-i18n="modelLabel">Model</span>
+            <select id="modelInput">
+              <option value="deepseek-v4-flash">V4 Flash</option>
+              <option value="deepseek-v4-pro">V4 Pro</option>
+            </select>
+          </label>
+        </section>
+
+        <div class="settings-actions">
+          <button id="saveButton" type="button" class="secondary" data-i18n="saveSettingsButton">Save settings</button>
+          <button id="clearCacheButton" type="button" class="ghost danger" data-i18n="clearCacheButton">Clear cache</button>
+        </div>
+      </details>
 
       <section class="site-settings">
         <div class="section-title">
-          <h2 data-i18n="enabledSitesTitle">Enabled sites</h2>
+          <div>
+            <h2 data-i18n="enabledSitesTitle">Enabled sites</h2>
+            <p data-i18n="enabledSitesDescription">Sites with continuous translation stay ready for next visit.</p>
+          </div>
           <span id="enabledSiteCount">0</span>
         </div>
         <div id="enabledSitesList" class="sites-list"></div>
       </section>
 
-      <p id="statusText" class="status"></p>
+      <p id="statusText" class="toast" role="status" aria-live="polite"></p>
     </main>
     <script src="popup.js"></script>
   </body>
