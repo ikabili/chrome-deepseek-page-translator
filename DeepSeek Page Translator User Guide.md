@@ -19,8 +19,8 @@ The extension UI is localized with Chrome i18n. It shows Simplified Chinese when
 - Limited concurrent DeepSeek API requests
 - Loading spinner while uncached text is being translated
 - Restore visible original text on the current page
-- Clear cache for the current domain
-- Manage enabled sites from the popup
+- Clear cache for the current site
+- Manage continuously translated sites from the popup
 - Abc/中 language badge toolbar icons with colored and gray states
 
 ## 3. Installation
@@ -60,9 +60,9 @@ When you click Translate page, the extension scans visible text nodes and:
 5. Sends cache misses to the DeepSeek API.
 6. Writes returned translations back to the page and saves them locally.
 
-## 6. Enable Continuous Translation for a Domain
+## 6. Enable Continuous Translation for a Site
 
-When you enable the switch in the popup, the current domain enters continuous translation mode.
+When you enable the switch in the popup, the current site enters continuous translation mode.
 
 For example, on:
 
@@ -150,7 +150,7 @@ This only affects the current page. It does not delete cache and does not disabl
 
 ## 12. Clear Cache
 
-Click Clear cache to remove IndexedDB translation cache for the current domain.
+Click Clear cache to remove IndexedDB translation cache for the current site.
 
 It does not:
 
@@ -159,9 +159,9 @@ It does not:
 - Delete site configuration
 - Clear cache for other domains
 
-## 13. Manage Enabled Sites
+## 13. Manage Continuously Translated Sites
 
-The popup lists domains with continuous translation enabled.
+The popup lists sites with continuous translation enabled.
 
 Each site has two actions:
 

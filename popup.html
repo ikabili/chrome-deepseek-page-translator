@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>DeepSeek Translator</title>
+    <title>Continuous translation</title>
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
@@ -12,11 +12,11 @@
         <div class="brand">
           <img class="brand-mark" src="icons/translator-active-48.png" alt="" aria-hidden="true">
           <div>
-            <h1 data-i18n="popupTitle">DeepSeek Translator</h1>
-            <p id="domainText" data-i18n="domainLoading">Loading current domain...</p>
+            <h1 data-i18n="popupTitle">Continuous translation</h1>
+            <p id="domainText" data-i18n="domainLoading">Loading current site...</p>
           </div>
         </div>
-        <label class="switch" title="Enable continuous translation for this domain" data-i18n-title="domainSwitchTitle">
+        <label class="switch" title="Enable continuous translation for this site" data-i18n-title="domainSwitchTitle">
           <input id="enabledInput" type="checkbox">
           <span></span>
         </label>
@@ -88,8 +88,8 @@
       <section class="site-settings">
         <div class="section-title">
           <div>
-            <h2 data-i18n="enabledSitesTitle">Enabled sites</h2>
-            <p data-i18n="enabledSitesDescription">Sites with continuous translation stay ready for next visit.</p>
+            <h2 data-i18n="enabledSitesTitle">Continuously translated sites</h2>
+            <p data-i18n="enabledSitesDescription">Sites with continuous translation enabled will translate automatically next time.</p>
           </div>
           <span id="enabledSiteCount">0</span>
         </div>

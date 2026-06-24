@@ -9,19 +9,19 @@
     "message": "DeepSeek 翻译"
   },
   "popupTitle": {
-    "message": "DeepSeek 翻译"
+    "message": "持续翻译当前网站"
   },
   "filePageLabel": {
     "message": "本地文件"
   },
   "domainLoading": {
-    "message": "读取当前域名中..."
+    "message": "读取当前网站中..."
   },
   "domainUnavailable": {
     "message": "当前页面不可用"
   },
   "domainSwitchTitle": {
-    "message": "为当前域名开启持续翻译"
+    "message": "为当前网站开启持续翻译"
   },
   "apiKeyLabel": {
     "message": "API Key"
@@ -36,7 +36,7 @@
     "message": "必填"
   },
   "siteStatusLabel": {
-    "message": "站点"
+    "message": "网站"
   },
   "pageStatusLabel": {
     "message": "页面"
@@ -45,10 +45,10 @@
     "message": "API Key"
   },
   "siteStatusEnabled": {
-    "message": "自动开启"
+    "message": "持续翻译"
   },
   "siteStatusDisabled": {
-    "message": "自动关闭"
+    "message": "未开启"
   },
   "siteStatusUnavailable": {
     "message": "不可用"
@@ -113,13 +113,13 @@
     "message": "保存设置"
   },
   "enabledSitesTitle": {
-    "message": "已开启的网站"
+    "message": "持续翻译的网站"
   },
   "enabledSitesDescription": {
-    "message": "开启持续翻译的网站，下次访问会自动准备好。"
+    "message": "已开启持续翻译的网站，下次访问会自动翻译。"
   },
   "emptyEnabledSites": {
-    "message": "开启当前站点后，下次访问会自动翻译。"
+    "message": "开启当前网站后，下次访问会自动翻译。"
   },
   "disableSiteButton": {
     "message": "关闭"
@@ -150,10 +150,10 @@
     }
   },
   "statusDomainEnabled": {
-    "message": "已为当前域名开启"
+    "message": "已为当前网站开启持续翻译"
   },
   "statusDomainDisabled": {
-    "message": "已为当前域名关闭"
+    "message": "已为当前网站关闭持续翻译"
   },
   "statusTranslatingPage": {
     "message": "正在翻译当前页"
@@ -165,7 +165,7 @@
     "message": "缓存已清除"
   },
   "statusSiteDisabled": {
-    "message": "已关闭 $HOST$",
+    "message": "已关闭 $HOST$ 的持续翻译",
     "placeholders": {
       "host": {
         "content": "$1"
@@ -196,7 +196,7 @@
     "message": "翻译请求超时，页面会自动重试"
   },
   "errorTranslationCancelled": {
-    "message": "由于该网站已禁用翻译，本次翻译已取消"
+    "message": "由于该网站已关闭持续翻译，本次翻译已取消"
   },
   "errorDeepSeekRequestFailed": {
     "message": "DeepSeek 请求失败：$STATUS$ $DETAIL$",

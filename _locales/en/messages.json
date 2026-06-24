@@ -12,19 +12,19 @@
     "description": "Browser action tooltip."
   },
   "popupTitle": {
-    "message": "DeepSeek Translator"
+    "message": "Continuous translation"
   },
   "filePageLabel": {
     "message": "Local file"
   },
   "domainLoading": {
-    "message": "Loading current domain..."
+    "message": "Loading current site..."
   },
   "domainUnavailable": {
     "message": "Current page unavailable"
   },
   "domainSwitchTitle": {
-    "message": "Enable continuous translation for this domain"
+    "message": "Enable continuous translation for this site"
   },
   "apiKeyLabel": {
     "message": "API Key"
@@ -48,10 +48,10 @@
     "message": "API Key"
   },
   "siteStatusEnabled": {
-    "message": "Auto on"
+    "message": "Continuous"
   },
   "siteStatusDisabled": {
-    "message": "Auto off"
+    "message": "Off"
   },
   "siteStatusUnavailable": {
     "message": "Unavailable"
@@ -116,13 +116,13 @@
     "message": "Save settings"
   },
   "enabledSitesTitle": {
-    "message": "Enabled sites"
+    "message": "Continuously translated sites"
   },
   "enabledSitesDescription": {
-    "message": "Sites with continuous translation stay ready for next visit."
+    "message": "Sites with continuous translation enabled will translate automatically next time."
   },
   "emptyEnabledSites": {
-    "message": "Turn on the current site to keep it translated next time."
+    "message": "Turn on continuous translation for the current site to translate it automatically next time."
   },
   "disableSiteButton": {
     "message": "Disable"
@@ -153,10 +153,10 @@
     }
   },
   "statusDomainEnabled": {
-    "message": "Enabled for current domain"
+    "message": "Continuous translation enabled for the current site"
   },
   "statusDomainDisabled": {
-    "message": "Disabled for current domain"
+    "message": "Continuous translation disabled for the current site"
   },
   "statusTranslatingPage": {
     "message": "Translating current page"
@@ -168,7 +168,7 @@
     "message": "Cache cleared"
   },
   "statusSiteDisabled": {
-    "message": "Disabled $HOST$",
+    "message": "Disabled continuous translation for $HOST$",
     "placeholders": {
       "host": {
         "content": "$1"
@@ -199,7 +199,7 @@
     "message": "Translation request timed out. The page will retry automatically."
   },
   "errorTranslationCancelled": {
-    "message": "Translation was cancelled because this site is disabled"
+    "message": "Translation was cancelled because continuous translation is disabled for this site"
   },
   "errorDeepSeekRequestFailed": {
     "message": "DeepSeek request failed: $STATUS$ $DETAIL$",
