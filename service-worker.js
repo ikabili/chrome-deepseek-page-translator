@@ -19,6 +19,7 @@ const CACHE_TTL_DAYS = 90;
 const CACHE_TTL_MS = CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const API_KEY_TEST_TIMEOUT_MS = 15000;
+const TRANSLATION_REQUEST_TIMEOUT_MS = 45000;
 const PAGE_STATE_PREFIX = "pageState:";
 const LOCAL_PATTERN_KEY_PREFIX = "local-pattern";
 const NUMBER_TOKEN_RE = /[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
@@ -586,36 +587,57 @@ async function testDeepSeekApiKey(apiKey, model) {
 }
 
 async function requestDeepSeek(items, targetLang, config, signal) {
-  const response = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    signal,
-    headers: {
-      "Authorization": `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: config.model || DEFAULT_CONFIG.model,
-      response_format: { type: "json_object" },
-      temperature: 0,
-      thinking: { type: "disabled" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are a translation engine.",
-            `Translate every item to ${targetLang}.`,
-            "Preserve meaning, tone, numbers, punctuation, URLs, placeholders, and HTML entities.",
-            "Return only valid JSON in this shape: {\"items\":[{\"id\":\"same id\",\"translation\":\"translated text\"}]}",
-            "Do not add explanations."
-          ].join(" ")
-        },
-        {
-          role: "user",
-          content: JSON.stringify({ items })
-        }
-      ]
-    })
-  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, TRANSLATION_REQUEST_TIMEOUT_MS);
+  const abortRequest = () => controller.abort();
+  if (signal?.aborted) abortRequest();
+  signal?.addEventListener("abort", abortRequest, { once: true });
+
+  let response;
+  try {
+    response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.model || DEFAULT_CONFIG.model,
+        response_format: { type: "json_object" },
+        temperature: 0,
+        thinking: { type: "disabled" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You are a translation engine.",
+              `Translate every item to ${targetLang}.`,
+              "Preserve meaning, tone, numbers, punctuation, URLs, placeholders, and HTML entities.",
+              "Return only valid JSON in this shape: {\"items\":[{\"id\":\"same id\",\"translation\":\"translated text\"}]}",
+              "Do not add explanations."
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ items })
+          }
+        ]
+      })
+    });
+  } catch (error) {
+    if (timedOut && error?.name === "AbortError") {
+      throw new Error(t("errorDeepSeekRequestTimedOut"));
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", abortRequest);
+  }
 
   if (!response.ok) {
     const detail = await response.text();

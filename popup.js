@@ -62,16 +62,25 @@ function bindEvents() {
   });
 
   els.enabledInput.addEventListener("change", async () => {
+    const wantsEnable = els.enabledInput.checked;
+    if (wantsEnable && !els.apiKeyInput.value.trim()) {
+      els.enabledInput.checked = false;
+      els.settingsPanel.open = true;
+      setStatus(t("errorMissingApiKey"));
+      return;
+    }
+
     await saveFromForm({ render: false });
-    const response = await sendToActiveTab({ type: els.enabledInput.checked ? "translator:start" : "translator:stop" });
+    const response = await sendToActiveTab({ type: wantsEnable ? "translator:start" : "translator:stop" });
     await updateActionIcon();
 
     if (response?.ok === false) {
+      if (wantsEnable) await rollbackSiteEnabled(activeHost);
       els.settingsPanel.open = true;
       setStatus(response.error);
     } else {
-      if (!els.enabledInput.checked) pageStatus.pageState = "original";
-      setStatus(t(els.enabledInput.checked ? "statusDomainEnabled" : "statusDomainDisabled"));
+      if (!wantsEnable) pageStatus.pageState = "original";
+      setStatus(t(wantsEnable ? "statusDomainEnabled" : "statusDomainDisabled"));
     }
 
     await refreshPageStatus();
@@ -361,6 +370,26 @@ async function deleteSite(host) {
   }
   renderConfig();
   await refreshPageStatus();
+}
+
+async function rollbackSiteEnabled(host) {
+  host = normalizeHost(host);
+  if (!host || !config.sites?.[host]?.enabled) return;
+
+  config = {
+    ...config,
+    sites: normalizeSites({
+      ...(config.sites || {}),
+      [host]: {
+        ...(config.sites[host] || {}),
+        enabled: false
+      }
+    })
+  };
+  els.enabledInput.checked = false;
+  pageStatus.pageState = "original";
+  await chrome.storage.local.set({ translatorConfig: config });
+  await updateActionIcon();
 }
 
 async function refreshPageStatus() {

@@ -28,7 +28,7 @@
   const URL_CHANGE_FLUSH_DELAY_MS = 250;
   const SCROLL_FLUSH_DELAY_MS = 120;
   const INTERACTION_FLUSH_THROTTLE_MS = 200;
-  const RUNTIME_MESSAGE_TIMEOUT_MS = 30000;
+  const RUNTIME_MESSAGE_TIMEOUT_MS = 60000;
   const MAX_NODES_PER_FLUSH = 80;
   const MAX_VISIBLE_NODES_PER_FLUSH = 40;
   const MAX_ITEMS_PER_TRANSLATE_REQUEST = 10;
@@ -308,6 +308,7 @@
       state.nodeMap.set(node, {
         id: String(state.nextId++),
         original: text,
+        originalRaw: node.nodeValue,
         translated: ""
       });
     }
@@ -584,7 +585,7 @@
     for (const textNode of nodes) {
       const record = state.nodeMap.get(textNode);
       if (record?.translated) {
-        textNode.nodeValue = preserveEdgeWhitespace(textNode.nodeValue, record.original);
+        textNode.nodeValue = record.originalRaw ?? preserveEdgeWhitespace(textNode.nodeValue, record.original);
         record.translated = "";
       }
       removeLoadingIndicator(textNode);
