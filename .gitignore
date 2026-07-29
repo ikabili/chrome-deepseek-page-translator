@@ -1,4 +1,6 @@
 .DS_Store
+.tmp/
+*.har
 *.zip
 .omo/
 AGENTS.md

@@ -164,6 +164,51 @@
   "statusCacheCleared": {
     "message": "缓存已清除"
   },
+  "accessLogsTitle": {
+    "message": "DeepSeek 访问日志"
+  },
+  "accessLogsDescription": {
+    "message": "完整请求正文在本地最多保留 30 天或 1,000 条。"
+  },
+  "accessLogsPrivacyWarning": {
+    "message": "日志可能包含网页隐私内容，请谨慎导出和分享。"
+  },
+  "exportAccessLogsButton": {
+    "message": "导出日志"
+  },
+  "clearAccessLogsButton": {
+    "message": "清空日志"
+  },
+  "statusAccessLogsCleared": {
+    "message": "访问日志已清空"
+  },
+  "statusAccessLogsClearFailed": {
+    "message": "无法清空访问日志：$ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusAccessLogsEmpty": {
+    "message": "没有可导出的访问日志"
+  },
+  "statusAccessLogsExported": {
+    "message": "已导出 $COUNT$ 条访问日志",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusAccessLogsExportFailed": {
+    "message": "无法导出访问日志：$ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
   "statusSiteDisabled": {
     "message": "已关闭 $HOST$ 的持续翻译",
     "placeholders": {

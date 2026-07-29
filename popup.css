@@ -131,6 +131,7 @@ p {
 
 .status-card,
 .settings-panel,
+.access-log-settings,
 .site-settings {
   margin-top: 10px;
   border: 1px solid var(--line);
@@ -412,8 +413,23 @@ select:focus {
   margin: 0 12px;
 }
 
+.access-log-settings,
 .site-settings {
   padding: 12px;
+}
+
+.privacy-warning {
+  margin: 8px 0;
+  border-radius: 6px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  padding: 8px;
+}
+
+.access-log-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .section-title {

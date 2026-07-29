@@ -10,8 +10,11 @@ const DEFAULT_CONFIG = {
 };
 
 const DB_NAME = "deepseek-page-translator";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const TRANSLATIONS_STORE = "translations";
+const ACCESS_LOGS_STORE = "accessLogs";
+const ACCESS_LOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const ACCESS_LOG_MAX_RECORDS = 1000;
 const MAX_PARALLEL_REQUESTS = 50;
 const RESERVED_VISIBLE_REQUESTS = 20;
 const MAX_NORMAL_PARALLEL_REQUESTS = MAX_PARALLEL_REQUESTS - RESERVED_VISIBLE_REQUESTS;
@@ -99,6 +102,19 @@ async function handleMessage(message, sender) {
       ? message.host
       : getSenderHost(sender);
     await clearCache(host);
+    return { ok: true };
+  }
+
+  if (message?.type === "translator:get-access-log-summary") {
+    return { ok: true, count: await getAccessLogCount() };
+  }
+
+  if (message?.type === "translator:get-access-logs") {
+    return { ok: true, items: await getAccessLogs() };
+  }
+
+  if (message?.type === "translator:clear-access-logs") {
+    await clearAccessLogs();
     return { ok: true };
   }
 
@@ -336,13 +352,21 @@ function getSessionStorage() {
 
 async function translateBatch(items, targetLang, sender, options = {}) {
   const config = await getConfig();
-  if (!config.apiKey) {
-    throw new Error(t("errorMissingApiKey"));
-  }
-
   const host = getSenderHost(sender);
   const lang = targetLang || config.sites?.[host]?.targetLang || config.targetLang;
   const model = config.model || DEFAULT_CONFIG.model;
+  if (!config.apiKey) {
+    await writeConfigErrorLogBestEffort({
+      requestType: "translation",
+      host,
+      model,
+      targetLang: lang,
+      itemCount: items.length,
+      errorReason: t("errorMissingApiKey")
+    });
+    throw new Error(t("errorMissingApiKey"));
+  }
+
   const keyedItems = await prepareCacheItems(items, host, lang, model);
   const priority = normalizePriority(options.priority);
   const results = [];
@@ -464,7 +488,7 @@ function runScheduledRequests() {
     task.abortController = new AbortController();
     translationScheduler.activeTasks.add(task);
 
-    requestDeepSeek(task.items, task.targetLang, task.config, task.abortController.signal)
+    requestDeepSeek(task.items, task.targetLang, task.config, task.abortController.signal, task.host)
       .then((result) => {
         if (task.cancelled) {
           task.reject(createCancellationError(task.host));
@@ -539,12 +563,38 @@ function normalizePriority(priority) {
 
 async function testDeepSeekApiKey(apiKey, model) {
   const key = String(apiKey || "").trim();
+  const requestModel = model || DEFAULT_CONFIG.model;
   if (!key) {
+    await writeConfigErrorLogBestEffort({
+      requestType: "api_key_test",
+      host: "",
+      model: requestModel,
+      targetLang: "",
+      itemCount: 0,
+      errorReason: t("errorMissingApiKey")
+    });
     throw new Error(t("errorMissingApiKey"));
   }
 
+  const requestBody = JSON.stringify(buildApiKeyTestRequestBody(requestModel));
+  const requestId = createAccessLogId();
+  const startedAtMs = Date.now();
+  await startAccessLogBestEffort({
+    requestId,
+    requestType: "api_key_test",
+    host: "",
+    model: requestModel,
+    targetLang: "",
+    itemCount: 0,
+    requestBody
+  });
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), API_KEY_TEST_TIMEOUT_MS);
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, API_KEY_TEST_TIMEOUT_MS);
   let response;
 
   try {
@@ -555,21 +605,16 @@ async function testDeepSeekApiKey(apiKey, model) {
         "Authorization": `Bearer ${key}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        model: model || DEFAULT_CONFIG.model,
-        temperature: 0,
-        max_tokens: 1,
-        thinking: { type: "disabled" },
-        messages: [
-          {
-            role: "user",
-            content: "Reply with OK."
-          }
-        ]
-      })
+      body: requestBody
     });
   } catch (error) {
-    if (error?.name === "AbortError") {
+    const status = timedOut && error?.name === "AbortError" ? "timeout" : "network_error";
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status,
+      errorCategory: status,
+      errorReason: status === "timeout" ? t("errorDeepSeekRequestTimedOut") : errorMessage(error)
+    });
+    if (status === "timeout") {
       throw new Error(t("errorDeepSeekRequestTimedOut"));
     }
     throw error;
@@ -577,16 +622,74 @@ async function testDeepSeekApiKey(apiKey, model) {
     clearTimeout(timeoutId);
   }
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(t("errorDeepSeekRequestFailed", [String(response.status), detail.slice(0, 200)]));
+  let responseText;
+  try {
+    responseText = await response.text();
+  } catch (error) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "network_error",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      errorCategory: "network_error",
+      errorReason: errorMessage(error)
+    });
+    throw error;
   }
 
-  await response.json();
+  const responseBytes = utf8ByteLength(responseText);
+  if (!response.ok) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "http_error",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      responseBytes,
+      responseBody: responseText,
+      errorCategory: "http_error",
+      errorReason: `HTTP ${response.status} ${response.statusText}`.trim()
+    });
+    throw new Error(t("errorDeepSeekRequestFailed", [String(response.status), responseText.slice(0, 200)]));
+  }
+
+  try {
+    JSON.parse(responseText);
+  } catch (error) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "parse_error",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      responseBytes,
+      responseBody: responseText,
+      errorCategory: "parse_error",
+      errorReason: errorMessage(error)
+    });
+    throw new Error(t("errorDeepSeekMalformedResponse"));
+  }
+
+  await finishAccessLogBestEffort(requestId, startedAtMs, {
+    status: "success",
+    httpStatus: response.status,
+    httpStatusText: response.statusText,
+    responseBytes,
+    responseItemCount: 0
+  });
   return { ok: true };
 }
 
-async function requestDeepSeek(items, targetLang, config, signal) {
+async function requestDeepSeek(items, targetLang, config, signal, host) {
+  const model = config.model || DEFAULT_CONFIG.model;
+  const requestBody = JSON.stringify(buildTranslationRequestBody(items, targetLang, model));
+  const requestId = createAccessLogId();
+  const startedAtMs = Date.now();
+  await startAccessLogBestEffort({
+    requestId,
+    requestType: "translation",
+    host,
+    model,
+    targetLang,
+    itemCount: items.length,
+    requestBody
+  });
+
   const controller = new AbortController();
   let timedOut = false;
   const timeoutId = setTimeout(() => {
@@ -606,31 +709,24 @@ async function requestDeepSeek(items, targetLang, config, signal) {
         "Authorization": `Bearer ${config.apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        model: config.model || DEFAULT_CONFIG.model,
-        response_format: { type: "json_object" },
-        temperature: 0,
-        thinking: { type: "disabled" },
-        messages: [
-          {
-            role: "system",
-            content: [
-              "You are a translation engine.",
-              `Translate every item to ${targetLang}.`,
-              "Preserve meaning, tone, numbers, punctuation, URLs, placeholders, and HTML entities.",
-              "Return only valid JSON in this shape: {\"items\":[{\"id\":\"same id\",\"translation\":\"translated text\"}]}",
-              "Do not add explanations."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify({ items })
-          }
-        ]
-      })
+      body: requestBody
     });
   } catch (error) {
-    if (timedOut && error?.name === "AbortError") {
+    const status = timedOut && error?.name === "AbortError"
+      ? "timeout"
+      : error?.name === "AbortError"
+        ? "cancelled"
+        : "network_error";
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status,
+      errorCategory: status,
+      errorReason: status === "timeout"
+        ? t("errorDeepSeekRequestTimedOut")
+        : status === "cancelled"
+          ? t("errorTranslationCancelled", [host || ""])
+          : errorMessage(error)
+    });
+    if (status === "timeout") {
       throw new Error(t("errorDeepSeekRequestTimedOut"));
     }
     throw error;
@@ -639,14 +735,205 @@ async function requestDeepSeek(items, targetLang, config, signal) {
     signal?.removeEventListener("abort", abortRequest);
   }
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(t("errorDeepSeekRequestFailed", [String(response.status), detail.slice(0, 200)]));
+  let responseText;
+  try {
+    responseText = await response.text();
+  } catch (error) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "network_error",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      errorCategory: "network_error",
+      errorReason: errorMessage(error)
+    });
+    throw error;
   }
 
-  const data = await response.json();
+  const responseBytes = utf8ByteLength(responseText);
+  if (!response.ok) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "http_error",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      responseBytes,
+      responseBody: responseText,
+      errorCategory: "http_error",
+      errorReason: `HTTP ${response.status} ${response.statusText}`.trim()
+    });
+    throw new Error(t("errorDeepSeekRequestFailed", [String(response.status), responseText.slice(0, 200)]));
+  }
+
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch (error) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "parse_error",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      responseBytes,
+      responseBody: responseText,
+      errorCategory: "parse_error",
+      errorReason: errorMessage(error)
+    });
+    throw new Error(t("errorDeepSeekMalformedResponse"));
+  }
+
   const content = data?.choices?.[0]?.message?.content || "";
-  return parseDeepSeekItems(content);
+  let translatedItems;
+  try {
+    translatedItems = parseDeepSeekItems(content);
+  } catch (error) {
+    await finishAccessLogBestEffort(requestId, startedAtMs, {
+      status: "malformed_response",
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      responseBytes,
+      responseBody: responseText,
+      errorCategory: "malformed_response",
+      errorReason: errorMessage(error)
+    });
+    throw error;
+  }
+
+  await finishAccessLogBestEffort(requestId, startedAtMs, {
+    status: "success",
+    httpStatus: response.status,
+    httpStatusText: response.statusText,
+    responseBytes,
+    responseItemCount: translatedItems.length
+  });
+  return translatedItems;
+}
+
+function buildApiKeyTestRequestBody(model) {
+  return {
+    model,
+    temperature: 0,
+    max_tokens: 1,
+    thinking: { type: "disabled" },
+    messages: [
+      {
+        role: "user",
+        content: "Reply with OK."
+      }
+    ]
+  };
+}
+
+function buildTranslationRequestBody(items, targetLang, model) {
+  return {
+    model,
+    response_format: { type: "json_object" },
+    temperature: 0,
+    thinking: { type: "disabled" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are a translation engine.",
+          `Translate every item to ${targetLang}.`,
+          "Preserve meaning, tone, numbers, punctuation, URLs, placeholders, and HTML entities.",
+          "Return only valid JSON in this shape: {\"items\":[{\"id\":\"same id\",\"translation\":\"translated text\"}]}",
+          "Do not add explanations."
+        ].join(" ")
+      },
+      {
+        role: "user",
+        content: JSON.stringify({ items })
+      }
+    ]
+  };
+}
+
+function createAccessLogId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function startAccessLogBestEffort(log) {
+  const startedAt = new Date().toISOString();
+  const record = {
+    requestId: log.requestId,
+    requestType: log.requestType,
+    status: "pending",
+    startedAt,
+    finishedAt: null,
+    durationMs: null,
+    host: log.host || "",
+    model: log.model || "",
+    targetLang: log.targetLang || "",
+    itemCount: Number(log.itemCount) || 0,
+    requestBody: log.requestBody || "",
+    httpStatus: null,
+    httpStatusText: "",
+    responseBytes: null,
+    responseItemCount: null,
+    responseBody: null,
+    errorCategory: "",
+    errorReason: ""
+  };
+
+  try {
+    await putAccessLog(record);
+  } catch (error) {
+    console.warn("Failed to persist DeepSeek access log", error);
+  }
+}
+
+async function finishAccessLogBestEffort(requestId, startedAtMs, updates) {
+  try {
+    await updateAccessLog(requestId, {
+      ...updates,
+      finishedAt: new Date().toISOString(),
+      durationMs: Math.max(0, Date.now() - startedAtMs)
+    });
+  } catch (error) {
+    console.warn("Failed to update DeepSeek access log", error);
+  }
+}
+
+async function writeConfigErrorLogBestEffort({
+  requestType,
+  host,
+  model,
+  targetLang,
+  itemCount,
+  errorReason
+}) {
+  const timestamp = new Date().toISOString();
+  try {
+    await putAccessLog({
+      requestId: createAccessLogId(),
+      requestType,
+      status: "config_error",
+      startedAt: timestamp,
+      finishedAt: timestamp,
+      durationMs: 0,
+      host: host || "",
+      model: model || "",
+      targetLang: targetLang || "",
+      itemCount: Number(itemCount) || 0,
+      requestBody: "",
+      httpStatus: null,
+      httpStatusText: "",
+      responseBytes: null,
+      responseItemCount: null,
+      responseBody: null,
+      errorCategory: "config_error",
+      errorReason: errorReason || ""
+    });
+  } catch (error) {
+    console.warn("Failed to persist DeepSeek config error log", error);
+  }
+}
+
+function utf8ByteLength(text) {
+  return new TextEncoder().encode(String(text || "")).byteLength;
+}
+
+function errorMessage(error) {
+  return error?.message || String(error);
 }
 
 function parseDeepSeekItems(content) {
@@ -882,6 +1169,105 @@ async function localPatternKey(host, targetLang, model, sourceTemplate) {
   return `${LOCAL_PATTERN_KEY_PREFIX}:${host}:${targetLang}:${model}:${hash}`;
 }
 
+async function putAccessLog(record) {
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(ACCESS_LOGS_STORE, "readwrite");
+  const store = transaction.objectStore(ACCESS_LOGS_STORE);
+  store.put(record);
+  await cleanupAccessLogStore(store);
+  await waitForTransaction(transaction);
+}
+
+async function updateAccessLog(requestId, updates) {
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(ACCESS_LOGS_STORE, "readwrite");
+  const store = transaction.objectStore(ACCESS_LOGS_STORE);
+
+  await new Promise((resolve, reject) => {
+    const request = store.get(requestId);
+    request.onsuccess = () => {
+      if (request.result) store.put({ ...request.result, ...updates });
+      resolve();
+    };
+    request.onerror = () => reject(request.error);
+  });
+
+  await waitForTransaction(transaction);
+}
+
+async function getAccessLogCount() {
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(ACCESS_LOGS_STORE, "readonly");
+  const store = transaction.objectStore(ACCESS_LOGS_STORE);
+  const count = await requestResult(store.count());
+  await waitForTransaction(transaction);
+  return count;
+}
+
+async function getAccessLogs() {
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(ACCESS_LOGS_STORE, "readonly");
+  const store = transaction.objectStore(ACCESS_LOGS_STORE);
+  const records = await requestResult(store.index("startedAt").getAll());
+  await waitForTransaction(transaction);
+  return records;
+}
+
+async function clearAccessLogs() {
+  const db = await openTranslationsDb();
+  const transaction = db.transaction(ACCESS_LOGS_STORE, "readwrite");
+  transaction.objectStore(ACCESS_LOGS_STORE).clear();
+  await waitForTransaction(transaction);
+}
+
+async function cleanupAccessLogStore(store) {
+  const index = store.index("startedAt");
+  const expireBefore = new Date(Date.now() - ACCESS_LOG_TTL_MS).toISOString();
+
+  await new Promise((resolve, reject) => {
+    const expireRequest = index.openKeyCursor(IDBKeyRange.upperBound(expireBefore, true));
+    expireRequest.onsuccess = () => {
+      const cursor = expireRequest.result;
+      if (cursor) {
+        store.delete(cursor.primaryKey);
+        cursor.continue();
+        return;
+      }
+
+      const countRequest = store.count();
+      countRequest.onsuccess = () => {
+        let overflow = countRequest.result - ACCESS_LOG_MAX_RECORDS;
+        if (overflow <= 0) {
+          resolve();
+          return;
+        }
+
+        const oldestRequest = index.openKeyCursor();
+        oldestRequest.onsuccess = () => {
+          const oldestCursor = oldestRequest.result;
+          if (!oldestCursor || overflow <= 0) {
+            resolve();
+            return;
+          }
+          store.delete(oldestCursor.primaryKey);
+          overflow -= 1;
+          oldestCursor.continue();
+        };
+        oldestRequest.onerror = () => reject(oldestRequest.error);
+      };
+      countRequest.onerror = () => reject(countRequest.error);
+    };
+    expireRequest.onerror = () => reject(expireRequest.error);
+  });
+}
+
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
 function openTranslationsDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -898,6 +1284,13 @@ function openTranslationsDb() {
         store.createIndex("hostTargetLang", ["host", "targetLang"], { unique: false });
       }
       if (!store.indexNames.contains("updatedAt")) store.createIndex("updatedAt", "updatedAt", { unique: false });
+
+      const accessLogs = db.objectStoreNames.contains(ACCESS_LOGS_STORE)
+        ? request.transaction.objectStore(ACCESS_LOGS_STORE)
+        : db.createObjectStore(ACCESS_LOGS_STORE, { keyPath: "requestId" });
+      if (!accessLogs.indexNames.contains("startedAt")) {
+        accessLogs.createIndex("startedAt", "startedAt", { unique: false });
+      }
     };
 
     request.onsuccess = () => resolve(request.result);

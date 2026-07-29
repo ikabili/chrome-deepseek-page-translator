@@ -15,6 +15,7 @@ Full English guide: [DeepSeek Page Translator User Guide](DeepSeek%20Page%20Tran
 - Cache translations in the extension's IndexedDB database.
 - Restore visible original text on the current page.
 - Clear cache for the current domain.
+- Keep local DeepSeek access logs and export them as JSONL for diagnostics.
 - Use `deepseek-v4-flash` or `deepseek-v4-pro`.
 - Toolbar icons use an Abc/中 language badge style, with colored and gray states.
 - Localized extension UI: Simplified Chinese for `zh-CN`, English for other browser UI languages.
@@ -33,6 +34,8 @@ Full English guide: [DeepSeek Page Translator User Guide](DeepSeek%20Page%20Tran
 Your API Key is stored in your own browser with `chrome.storage.local`. It is not written to this project directory or to packaged ZIP files.
 
 Visible page text that needs translation is sent to the DeepSeek API. Translation cache is stored in the extension's own IndexedDB database named `deepseek-page-translator`, object store `translations`.
+
+DeepSeek access logs are stored locally in the same database under `accessLogs`. Logs contain the full request body and may therefore include private page text. A full response is retained only for HTTP failures, JSON parse failures, or malformed responses. API Keys and authorization headers are never logged. Logs are limited to 1,000 records and 30 days; use the popup to export them as JSONL or clear them.
 
 The content script sends up to 10 text items per translation request. The service worker can run up to 50 API requests in parallel, reserving 20 slots for visible text.
 

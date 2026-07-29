@@ -33,6 +33,9 @@ const els = {
   translateButton: document.getElementById("translateButton"),
   restoreButton: document.getElementById("restoreButton"),
   clearCacheButton: document.getElementById("clearCacheButton"),
+  accessLogCount: document.getElementById("accessLogCount"),
+  exportAccessLogsButton: document.getElementById("exportAccessLogsButton"),
+  clearAccessLogsButton: document.getElementById("clearAccessLogsButton"),
   saveButton: document.getElementById("saveButton"),
   enabledSiteCount: document.getElementById("enabledSiteCount"),
   enabledSitesList: document.getElementById("enabledSitesList"),
@@ -54,6 +57,7 @@ async function init() {
   pageStatus = await getPageStatus();
   renderConfig();
   bindEvents();
+  await refreshAccessLogSummary();
 }
 
 function bindEvents() {
@@ -120,6 +124,26 @@ function bindEvents() {
   els.clearCacheButton.addEventListener("click", async () => {
     await chrome.runtime.sendMessage({ type: "translator:clear-cache", host: activeHost });
     setStatus(t("statusCacheCleared"));
+  });
+
+  els.exportAccessLogsButton.addEventListener("click", async () => {
+    await exportAccessLogs();
+  });
+
+  els.clearAccessLogsButton.addEventListener("click", async () => {
+    let response;
+    try {
+      response = await chrome.runtime.sendMessage({ type: "translator:clear-access-logs" });
+    } catch (error) {
+      setStatus(t("statusAccessLogsClearFailed", errorMessage(error)), 5600);
+      return;
+    }
+    if (!response?.ok) {
+      setStatus(t("statusAccessLogsClearFailed", response?.error || ""), 5600);
+      return;
+    }
+    await refreshAccessLogSummary();
+    setStatus(t("statusAccessLogsCleared"));
   });
 
   els.enabledSitesList.addEventListener("click", async (event) => {
@@ -237,6 +261,72 @@ function renderEnabledSites() {
   for (const [host, site] of enabledSites) {
     els.enabledSitesList.append(createSiteItem(host, site));
   }
+}
+
+async function refreshAccessLogSummary() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "translator:get-access-log-summary" });
+    if (!response?.ok) throw new Error(response?.error || "Unable to read access logs");
+    const count = Number(response.count) || 0;
+    els.accessLogCount.textContent = String(count);
+    els.exportAccessLogsButton.disabled = count === 0;
+    els.clearAccessLogsButton.disabled = count === 0;
+  } catch {
+    els.accessLogCount.textContent = "—";
+    els.exportAccessLogsButton.disabled = true;
+    els.clearAccessLogsButton.disabled = true;
+  }
+}
+
+async function exportAccessLogs() {
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage({ type: "translator:get-access-logs" });
+  } catch (error) {
+    setStatus(t("statusAccessLogsExportFailed", errorMessage(error)), 5600);
+    return;
+  }
+
+  if (!response?.ok) {
+    setStatus(t("statusAccessLogsExportFailed", response?.error || ""), 5600);
+    return;
+  }
+
+  const records = Array.isArray(response.items) ? response.items : [];
+  if (!records.length) {
+    await refreshAccessLogSummary();
+    setStatus(t("statusAccessLogsEmpty"));
+    return;
+  }
+
+  const jsonl = `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+  const blob = new Blob([jsonl], { type: "application/x-ndjson;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `deepseek-access-log-${formatLogTimestamp(new Date())}.jsonl`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  setStatus(t("statusAccessLogsExported", String(records.length)));
+}
+
+function formatLogTimestamp(date) {
+  const parts = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+    "-",
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0")
+  ];
+  return parts.join("");
+}
+
+function errorMessage(error) {
+  return error?.message || String(error);
 }
 
 function createSiteItem(host, site) {

@@ -11,6 +11,7 @@ The extension UI is localized with Chrome i18n. It shows Simplified Chinese when
 ## 2. Features
 
 - Local DeepSeek API Key configuration
+- Persistent DeepSeek access logs with JSONL export
 - Translate the current page on demand
 - Enable or disable continuous translation per domain
 - Incremental translation for dynamic pages and SPAs
@@ -159,7 +160,17 @@ It does not:
 - Delete site configuration
 - Clear cache for other domains
 
-## 13. Manage Continuously Translated Sites
+## 13. DeepSeek Access Logs
+
+The popup shows how many DeepSeek access log records are stored and provides Export logs and Clear logs actions.
+
+Each log records request timing, model, target language, source site, result status, error category, and the full request body. Because the request body contains source text, access logs may contain private page content. Successful responses store only a size and item-count summary. The full raw response is stored only when the HTTP request fails, JSON parsing fails, or the response structure is invalid. API Keys and `Authorization` headers are never logged.
+
+Logs are kept in the extension's local IndexedDB database for at most 30 days and 1,000 records. Export logs downloads a time-ordered `deepseek-access-log-YYYYMMDD-HHmmss.jsonl` file. Each line is one JSON record. Clear logs deletes access logs only; it does not delete translation cache or site settings.
+
+Review exported files before sharing them because they can contain complete web page text and failed DeepSeek responses.
+
+## 14. Manage Continuously Translated Sites
 
 The popup lists sites with continuous translation enabled.
 
@@ -168,7 +179,7 @@ Each site has two actions:
 - Disable: turn off continuous translation, keeping the target language setting and cache. If the disabled domain is open, visible translated text is restored.
 - Delete: remove the site configuration and clear that domain's cache.
 
-## 14. Translation Prompt
+## 15. Translation Prompt
 
 The extension uses a fixed English system prompt for DeepSeek:
 
@@ -188,7 +199,7 @@ The request includes:
 }
 ```
 
-## 15. FAQ
+## 16. FAQ
 
 ### Why can some pages not be translated?
 
@@ -214,6 +225,8 @@ No. Chrome Developer mode loads unpacked folders only. ZIP files are useful for 
 
 No. The ZIP contains only extension code and assets. Each user enters their own API Key in their own browser.
 
-## 16. Security Notes
+## 17. Security Notes
 
 Do not expose your API Key in screenshots, recordings, documents, or source files. Do not share a Chrome browser profile that already contains your API Key.
+
+DeepSeek access logs do not contain the API Key, but they can contain complete source text and error responses. Treat exported JSONL files as sensitive data.

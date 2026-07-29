@@ -167,6 +167,51 @@
   "statusCacheCleared": {
     "message": "Cache cleared"
   },
+  "accessLogsTitle": {
+    "message": "DeepSeek access logs"
+  },
+  "accessLogsDescription": {
+    "message": "Stores full request text locally for up to 30 days or 1,000 records."
+  },
+  "accessLogsPrivacyWarning": {
+    "message": "Logs may contain private page text. Export and share them carefully."
+  },
+  "exportAccessLogsButton": {
+    "message": "Export logs"
+  },
+  "clearAccessLogsButton": {
+    "message": "Clear logs"
+  },
+  "statusAccessLogsCleared": {
+    "message": "Access logs cleared"
+  },
+  "statusAccessLogsClearFailed": {
+    "message": "Could not clear access logs: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusAccessLogsEmpty": {
+    "message": "There are no access logs to export"
+  },
+  "statusAccessLogsExported": {
+    "message": "Exported $COUNT$ access log records",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "statusAccessLogsExportFailed": {
+    "message": "Could not export access logs: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1"
+      }
+    }
+  },
   "statusSiteDisabled": {
     "message": "Disabled continuous translation for $HOST$",
     "placeholders": {
