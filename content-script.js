@@ -73,6 +73,11 @@
       return true;
     }
 
+    if (message?.type === "translator:reconfigure") {
+      reconfigureTranslator(Boolean(message.forceRetranslate)).then(sendResponse);
+      return true;
+    }
+
     return undefined;
   });
 
@@ -118,6 +123,27 @@
     return { ok: true };
   }
 
+  async function reconfigureTranslator(forceRetranslate) {
+    if (!state.enabled) return { ok: true };
+
+    const siteConfig = await getSiteConfigForUrl(location.href);
+    if (!siteConfig?.hasApiKey) {
+      stopTranslator(true);
+      return { ok: true };
+    }
+
+    const nextTargetLang = siteConfig.targetLang || state.targetLang;
+    const shouldRetranslate = forceRetranslate || nextTargetLang !== state.targetLang;
+    clearRouteTranslationWork();
+    if (shouldRetranslate) {
+      restorePage();
+      state.nodeMap = new WeakMap();
+    }
+
+    state.targetLang = nextTargetLang;
+    return startTranslator(true);
+  }
+
   function getSiteConfigForUrl(url) {
     return chrome.runtime.sendMessage({
       type: "translator:get-site-config",
@@ -127,10 +153,7 @@
 
   function stopTranslator(restoreOriginal) {
     state.enabled = false;
-    state.pendingNodes.clear();
-    state.activeNodeIds.clear();
-    clearLoadingIndicators();
-    clearRouteTimers();
+    clearRouteTranslationWork();
     if (state.observer) {
       state.observer.disconnect();
       state.observer = null;
@@ -747,8 +770,6 @@
     const text = normalizeText(node.nodeValue);
     if (text.length < 2) return false;
     if (/^[\d\s\p{P}\p{S}]+$/u.test(text)) return false;
-    if (node.parentElement.closest("[contenteditable='true']")) return false;
-    if (node.parentElement.closest("[data-deepseek-translator-ignore]")) return false;
     return true;
   }
 
@@ -756,8 +777,15 @@
     if (!node) return true;
     if (node.nodeType === Node.TEXT_NODE) return false;
     if (node.nodeType !== Node.ELEMENT_NODE) return true;
-    if (BLOCKED_TAGS.has(node.tagName)) return true;
-    if (node.closest?.("[data-deepseek-translator-ignore]")) return true;
+
+    let element = node;
+    while (element) {
+      if (BLOCKED_TAGS.has(element.tagName)) return true;
+      if (element.isContentEditable) return true;
+      if (element.hasAttribute("data-deepseek-translator-ignore")) return true;
+      element = element.parentElement;
+    }
+
     return false;
   }
 

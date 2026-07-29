@@ -596,6 +596,7 @@ async function testDeepSeekApiKey(apiKey, model) {
     controller.abort();
   }, API_KEY_TEST_TIMEOUT_MS);
   let response;
+  let responseText;
 
   try {
     response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -607,10 +608,13 @@ async function testDeepSeekApiKey(apiKey, model) {
       },
       body: requestBody
     });
+    responseText = await response.text();
   } catch (error) {
     const status = timedOut && error?.name === "AbortError" ? "timeout" : "network_error";
     await finishAccessLogBestEffort(requestId, startedAtMs, {
       status,
+      httpStatus: response?.status ?? null,
+      httpStatusText: response?.statusText || "",
       errorCategory: status,
       errorReason: status === "timeout" ? t("errorDeepSeekRequestTimedOut") : errorMessage(error)
     });
@@ -620,20 +624,6 @@ async function testDeepSeekApiKey(apiKey, model) {
     throw error;
   } finally {
     clearTimeout(timeoutId);
-  }
-
-  let responseText;
-  try {
-    responseText = await response.text();
-  } catch (error) {
-    await finishAccessLogBestEffort(requestId, startedAtMs, {
-      status: "network_error",
-      httpStatus: response.status,
-      httpStatusText: response.statusText,
-      errorCategory: "network_error",
-      errorReason: errorMessage(error)
-    });
-    throw error;
   }
 
   const responseBytes = utf8ByteLength(responseText);
@@ -701,6 +691,7 @@ async function requestDeepSeek(items, targetLang, config, signal, host) {
   signal?.addEventListener("abort", abortRequest, { once: true });
 
   let response;
+  let responseText;
   try {
     response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
@@ -711,6 +702,7 @@ async function requestDeepSeek(items, targetLang, config, signal, host) {
       },
       body: requestBody
     });
+    responseText = await response.text();
   } catch (error) {
     const status = timedOut && error?.name === "AbortError"
       ? "timeout"
@@ -719,6 +711,8 @@ async function requestDeepSeek(items, targetLang, config, signal, host) {
         : "network_error";
     await finishAccessLogBestEffort(requestId, startedAtMs, {
       status,
+      httpStatus: response?.status ?? null,
+      httpStatusText: response?.statusText || "",
       errorCategory: status,
       errorReason: status === "timeout"
         ? t("errorDeepSeekRequestTimedOut")
@@ -733,20 +727,6 @@ async function requestDeepSeek(items, targetLang, config, signal, host) {
   } finally {
     clearTimeout(timeoutId);
     signal?.removeEventListener("abort", abortRequest);
-  }
-
-  let responseText;
-  try {
-    responseText = await response.text();
-  } catch (error) {
-    await finishAccessLogBestEffort(requestId, startedAtMs, {
-      status: "network_error",
-      httpStatus: response.status,
-      httpStatusText: response.statusText,
-      errorCategory: "network_error",
-      errorReason: errorMessage(error)
-    });
-    throw error;
   }
 
   const responseBytes = utf8ByteLength(responseText);
@@ -783,6 +763,7 @@ async function requestDeepSeek(items, targetLang, config, signal, host) {
   let translatedItems;
   try {
     translatedItems = parseDeepSeekItems(content);
+    validateDeepSeekResponse(items, translatedItems, data?.choices?.[0]?.finish_reason);
   } catch (error) {
     await finishAccessLogBestEffort(requestId, startedAtMs, {
       status: "malformed_response",
@@ -958,6 +939,29 @@ function parseDeepSeekItems(content) {
       translation: item.translation
     };
   });
+}
+
+function validateDeepSeekResponse(requestItems, translatedItems, finishReason) {
+  if (finishReason !== "stop") {
+    throw new Error(t("errorDeepSeekMalformedResponse"));
+  }
+
+  const expectedIds = requestItems.map((item) => String(item.id));
+  const expectedIdSet = new Set(expectedIds);
+  if (
+    expectedIdSet.size !== expectedIds.length
+    || translatedItems.length !== expectedIds.length
+  ) {
+    throw new Error(t("errorDeepSeekMalformedResponse"));
+  }
+
+  const returnedIds = new Set();
+  for (const item of translatedItems) {
+    if (!expectedIdSet.has(item.id) || returnedIds.has(item.id)) {
+      throw new Error(t("errorDeepSeekMalformedResponse"));
+    }
+    returnedIds.add(item.id);
+  }
 }
 
 async function getConfig() {

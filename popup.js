@@ -368,6 +368,11 @@ function createSiteButton(label, action, host, isDanger = false) {
 }
 
 async function saveFromForm({ render = true } = {}) {
+  const previousTargetLang = config.sites?.[activeHost]?.targetLang
+    || config.targetLang
+    || DEFAULT_CONFIG.targetLang;
+  const previousModel = config.model || DEFAULT_CONFIG.model;
+  const previousApiKey = config.apiKey || "";
   const nextSites = { ...(config.sites || {}) };
   if (activeHost) {
     nextSites[activeHost] = {
@@ -387,6 +392,16 @@ async function saveFromForm({ render = true } = {}) {
 
   await chrome.storage.local.set({ translatorConfig: config });
   if (render) renderConfig();
+  const translationConfigChanged = previousTargetLang !== els.targetLangInput.value
+    || previousModel !== els.modelInput.value;
+  const apiKeyChanged = previousApiKey !== config.apiKey;
+  if ((translationConfigChanged || apiKeyChanged) && pageStatus.pageState === "active") {
+    const response = await sendToActiveTab({
+      type: "translator:reconfigure",
+      forceRetranslate: translationConfigChanged
+    });
+    if (response?.ok === false) throw new Error(response.error || t("errorTranslationFailed"));
+  }
   await updateActionIcon();
 }
 
