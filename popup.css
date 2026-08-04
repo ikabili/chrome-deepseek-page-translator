@@ -68,6 +68,10 @@
   }
 }
 
+html {
+  width: 400px;
+}
+
 body {
   margin: 0;
   min-width: 360px;
@@ -78,6 +82,8 @@ body {
 
 .panel {
   box-sizing: border-box;
+  max-height: 600px;
+  overflow-y: auto;
   padding: 14px;
 }
 
@@ -534,6 +540,10 @@ button.text-button.danger {
   color: var(--primary-text);
   font-size: 12px;
   font-weight: 650;
+}
+
+.toast:empty {
+  display: none;
 }
 
 .toast.visible {
